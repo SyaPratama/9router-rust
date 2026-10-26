@@ -265,6 +265,9 @@ jobs:
     name: Publish Packages (Docker GHCR)
     needs: [tag, release]
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.tag.outputs.tag }}
     permissions:
       contents: read
       packages: write
