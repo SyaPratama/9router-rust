@@ -2,25 +2,13 @@ name: Release & Packages
 
 on:
   push:
-    branches:
-      - master
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
-      bump:
-        description: "Version bump type"
+      tag:
+        description: "Tag to release (e.g. v1.0.1)"
         required: true
-        default: "patch"
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-          - custom
-      custom_version:
-        description: "Explicit version (e.g. 1.0.1) if 'custom' is selected"
-        required: false
         type: string
 
 permissions:
@@ -33,126 +21,38 @@ concurrency:
 
 jobs:
   # -------------------------------------------------------------------------
-  # 1. AUTO TAG: Calculate version and create tag on bump
+  # 1. RESOLVE TAG: Read tag from git ref or manual workflow_dispatch input
   # -------------------------------------------------------------------------
-  tag:
-    name: Auto Tag & Version Resolution
+  resolve-tag:
+    name: Resolve Tag
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tagger.outputs.tag }}
       version: ${{ steps.tagger.outputs.version }}
-      should_release: ${{ steps.tagger.outputs.should_release }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve Version and Manage Tag
+      - name: Resolve Tag
         id: tagger
         shell: bash
         run: |
-          set -e
-          git fetch --tags --force 2>/dev/null || true
-
-          SHOULD_RELEASE="true"
-
-          # 1. Triggered directly by a pushed tag (e.g. git push origin v1.0.1)
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-            VERSION="${TAG#v}"
-            echo "Triggered by pushed tag: $TAG (version: $VERSION)"
-
-          # 2. Triggered manually via workflow_dispatch button
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            CURR_VER=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
-            BUMP_TYPE="${{ inputs.bump }}"
-
-            if [ "$BUMP_TYPE" == "custom" ]; then
-              NEW_VER="${{ inputs.custom_version }}"
-              if [ -z "$NEW_VER" ]; then
-                echo "Error: custom_version is required when bump=custom"
-                exit 1
-              fi
-            else
-              MAJOR=$(echo "$CURR_VER" | cut -d. -f1)
-              MINOR=$(echo "$CURR_VER" | cut -d. -f2)
-              PATCH=$(echo "$CURR_VER" | cut -d. -f3)
-              case "$BUMP_TYPE" in
-                major) NEW_VER="$((MAJOR + 1)).0.0" ;;
-                minor) NEW_VER="${MAJOR}.$((MINOR + 1)).0" ;;
-                patch|*) NEW_VER="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
-              esac
-            fi
-
-            TAG="v${NEW_VER}"
-            VERSION="${NEW_VER}"
-            echo "Manual dispatch bump requested: $CURR_VER -> $NEW_VER"
-
-            # Update Cargo.toml
-            sed -i -E "s/^version = \".*\"/version = \"${NEW_VER}\"/" Cargo.toml
-
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit -am "chore(release): bump version to ${TAG} [skip ci]"
-            git push origin master
-
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            echo "Created and pushed tag: $TAG"
-
-          # 3. Triggered by push to master
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
           else
-            CARGO_VER=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
-            TAG="v${CARGO_VER}"
-            VERSION="${CARGO_VER}"
-            echo "Detected Cargo.toml version: $CARGO_VER"
-
-            # Check if tag already exists on remote
-            if ! git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
-              echo "New version detected in Cargo.toml ($CARGO_VER). Creating tag $TAG..."
-              git config user.name "github-actions[bot]"
-              git config user.email "github-actions[bot]@users.noreply.github.com"
-              git tag -a "$TAG" -m "Release $TAG"
-              git push origin "$TAG"
-              echo "Successfully pushed tag $TAG to origin"
-            else
-              # Version in Cargo.toml is already tagged. Check if commit message requests bump
-              COMMIT_MSG=$(git log -1 --pretty=%B)
-              if echo "$COMMIT_MSG" | grep -iE '(\[bump\]|\[release\]|release:)' >/dev/null; then
-                MAJOR=$(echo "$CARGO_VER" | cut -d. -f1)
-                MINOR=$(echo "$CARGO_VER" | cut -d. -f2)
-                PATCH=$(echo "$CARGO_VER" | cut -d. -f3)
-                NEW_VER="${MAJOR}.${MINOR}.$((PATCH + 1))"
-                TAG="v${NEW_VER}"
-                VERSION="${NEW_VER}"
-                echo "Commit message requested bump to $TAG"
-                sed -i -E "s/^version = \".*\"/version = \"${NEW_VER}\"/" Cargo.toml
-                git config user.name "github-actions[bot]"
-                git config user.email "github-actions[bot]@users.noreply.github.com"
-                git commit -am "chore(release): bump version to ${TAG} [skip ci]"
-                git push origin master
-                git tag -a "$TAG" -m "Release $TAG"
-                git push origin "$TAG"
-              else
-                echo "Version $CARGO_VER is already tagged as $TAG. Skipping release."
-                SHOULD_RELEASE="false"
-              fi
-            fi
+            TAG="${GITHUB_REF#refs/tags/}"
           fi
-
+          if [[ "$TAG" != v* ]]; then
+            TAG="v$TAG"
+          fi
+          VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "should_release=$SHOULD_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "Releasing manual tag: $TAG (version: $VERSION)"
 
   # -------------------------------------------------------------------------
   # 2. BUILD BINARIES: Cross-compile for Linux, Windows, and macOS
   # -------------------------------------------------------------------------
   build-binaries:
     name: Build (${{ matrix.target }})
-    needs: tag
-    if: needs.tag.outputs.should_release == 'true'
+    needs: resolve-tag
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -207,7 +107,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         env:
-          TAG: ${{ needs.tag.outputs.tag }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p dist
@@ -230,7 +130,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          TAG: ${{ needs.tag.outputs.tag }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
           TARGET: ${{ matrix.target }}
         run: |
           New-Item -ItemType Directory -Force -Path dist
@@ -261,8 +161,7 @@ jobs:
   # -------------------------------------------------------------------------
   release:
     name: GitHub Release
-    needs: [tag, build-binaries]
-    if: needs.tag.outputs.should_release == 'true'
+    needs: [resolve-tag, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -282,8 +181,8 @@ jobs:
       - name: Generate unified checksums and detailed release description
         shell: bash
         env:
-          TAG: ${{ needs.tag.outputs.tag }}
-          VERSION: ${{ needs.tag.outputs.version }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+          VERSION: ${{ needs.resolve-tag.outputs.version }}
           REPO: ${{ github.repository }}
         run: |
           cd release-assets
@@ -366,8 +265,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.tag.outputs.tag }}
-          name: "9Router-Rust ${{ needs.tag.outputs.tag }}"
+          tag_name: ${{ needs.resolve-tag.outputs.tag }}
+          name: "9Router-Rust ${{ needs.resolve-tag.outputs.tag }}"
           draft: false
           prerelease: false
           body_path: release_body.md
@@ -383,12 +282,11 @@ jobs:
   # -------------------------------------------------------------------------
   docker-packages:
     name: Publish Packages (Docker GHCR)
-    needs: [tag, release]
-    if: needs.tag.outputs.should_release == 'true'
+    needs: [resolve-tag, release]
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.tag.outputs.tag }}
+      url: https://github.com/${{ github.repository }}/releases/tag/${{ needs.resolve-tag.outputs.tag }}
     permissions:
       contents: read
       packages: write
@@ -416,11 +314,11 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.tag.outputs.tag }}
-            type=raw,value=${{ needs.tag.outputs.version }}
-            type=semver,pattern={{version}},value=${{ needs.tag.outputs.tag }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.tag.outputs.tag }}
-            type=semver,pattern={{major}},value=${{ needs.tag.outputs.tag }}
+            type=raw,value=${{ needs.resolve-tag.outputs.tag }}
+            type=raw,value=${{ needs.resolve-tag.outputs.version }}
+            type=semver,pattern={{version}},value=${{ needs.resolve-tag.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.resolve-tag.outputs.tag }}
+            type=semver,pattern={{major}},value=${{ needs.resolve-tag.outputs.tag }}
 
       - name: Build and push multi-arch Docker image
         uses: docker/build-push-action@v6
