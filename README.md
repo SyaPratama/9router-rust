@@ -215,17 +215,6 @@ Navigate to [http://localhost:20128/dashboard](http://localhost:20128/dashboard)
 
 ---
 
-## 📦 Automated Releases & Packages (CI/CD)
-
-Every push to `master` automatically triggers the complete CI/CD pipeline (`.github/workflows/release.yml`):
-
-- 🏷️ **Auto-Tagging** — Semantic version tags are automatically generated and pushed.
-- 📦 **Multi-Platform Releases** — Precompiled release binaries for Linux, macOS, and Windows with SHA-256 checksums are attached to [GitHub Releases](https://github.com/SyaPratama/9router-rust/releases).
-- 🐳 **GitHub Container Registry** — Multi-arch Docker images (`linux/amd64` and `linux/arm64`) are built and published to `ghcr.io/syapratama/9router-rust:latest`.
-- 🚀 **Automated Deployments** — Deployment statuses are registered directly to GitHub.
-
----
-
 ## 👥 Contributors
 
 Thanks to everyone who helped build and evolve 9Router!
