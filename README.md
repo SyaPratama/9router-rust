@@ -302,13 +302,6 @@ Thanks to everyone who helped build and evolve 9Router!
 | [**SyaPratama**](https://github.com/SyaPratama) | Native Rust rewrite and Headroom integration |
 | [**Headroom Labs**](https://github.com/headroomlabs-ai) | Context compression algorithms (Apache 2.0) |
 
----
-
-## 📊 Star Chart
-
-[![Star Chart](https://starchart.cc/decolua/9router.svg?variant=adaptive)](https://starchart.cc/decolua/9router)
-
----
 
 ## 🔀 Forks & Related Projects
 
