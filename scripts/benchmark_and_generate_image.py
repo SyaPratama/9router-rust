@@ -92,7 +92,7 @@ def create_benchmark_image(data_results, output_path="images/benchmark-dark.png"
         }
     ]
 
-    names_display = ["SRouter", "9Router", "OmniRoute"]
+    names_display = ["9Router-Rust", "9Router", "OmniRoute"]
     items = [rust_data, node_data, omni_data]
 
     for p_idx, p in enumerate(panels):
@@ -149,7 +149,7 @@ def create_benchmark_image(data_results, output_path="images/benchmark-dark.png"
 if __name__ == "__main__":
     benchmark_data = [
         {
-            "name": "SRouter",
+            "name": "9Router-Rust",
             "throughput": 8675,
             "idle_memory_mb": 15,
             "p50_latency_ms": 5.5,
