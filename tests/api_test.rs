@@ -62,6 +62,83 @@ async fn test_v1_models_endpoint() {
 }
 
 #[tokio::test]
+async fn test_dashboard_and_summary_endpoints() {
+    let pool = init_memory_pool().expect("DB pool");
+    let conn = pool.get().expect("conn");
+    migrate(&conn).expect("migrate");
+    drop(conn);
+
+    let engine = Arc::new(RoutingEngine::new(pool));
+    let app = build_router(engine);
+
+    let dashboard = app.clone().oneshot(
+        Request::builder()
+            .uri("/dashboard")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(dashboard.status(), StatusCode::OK);
+    let dashboard_body = to_bytes(dashboard.into_body(), usize::MAX).await.unwrap();
+    let dashboard_html = String::from_utf8(dashboard_body.to_vec()).unwrap();
+    assert!(dashboard_html.contains("9Router Dashboard"));
+    assert!(dashboard_html.contains("Add provider"));
+
+    let summary = app.clone().oneshot(
+        Request::builder()
+            .uri("/api/summary")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(summary.status(), StatusCode::OK);
+    let summary_body = to_bytes(summary.into_body(), usize::MAX).await.unwrap();
+    let value: Value = serde_json::from_slice(&summary_body).unwrap();
+    assert_eq!(value["providers"]["total"], 0);
+    assert_eq!(value["combos"], 0);
+    assert_eq!(value["keys"]["active"], 0);
+
+    let nested_dashboard = app.clone().oneshot(
+        Request::builder()
+            .uri("/dashboard/providers")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(nested_dashboard.status(), StatusCode::OK);
+
+    let dashboard_css = app.clone().oneshot(
+        Request::builder()
+            .uri("/dashboard/assets/dashboard.css")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(dashboard_css.status(), StatusCode::OK);
+    assert_eq!(dashboard_css.headers()["content-type"], "text/css; charset=utf-8");
+
+    for path in ["/landing", "/login", "/callback", "/dashboard/settings/pricing"] {
+        let response = app.clone().oneshot(
+            Request::builder()
+                .uri(path)
+                .method("GET")
+                .body(Body::empty())
+                .unwrap(),
+        ).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "page route {path}");
+    }
+
+    let site_css = app.clone().oneshot(
+        Request::builder()
+            .uri("/site/assets/site.css")
+            .method("GET")
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(site_css.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_v1_compress_endpoint() {
     let pool = init_memory_pool().expect("DB pool");
     let conn = pool.get().expect("conn");

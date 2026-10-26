@@ -15,8 +15,40 @@ pub async fn get_health() -> impl IntoResponse {
         "status": "ok",
         "engine": "native-rust",
         "headroom": "integrated",
-        "version": "1.0.0"
+        "version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+pub async fn get_summary(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("DB connection error: {e}")))?;
+    let providers = ConnectionsRepo::list_all(&conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let combos = CombosRepo::list_all(&conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let keys = ApiKeysRepo::list_all(&conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let settings = SettingsRepo::get(&conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let usage = UsageRepo::stats(&conn)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "providers": {
+            "total": providers.len(),
+            "active": providers.iter().filter(|item| item.is_active).count()
+        },
+        "combos": combos.len(),
+        "keys": {
+            "total": keys.len(),
+            "active": keys.iter().filter(|item| item.is_active).count()
+        },
+        "settings": settings,
+        "usage": usage
+    })))
 }
 
 pub async fn get_settings(
