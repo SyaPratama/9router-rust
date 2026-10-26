@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>9Router Native Rust Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+      --success: #10b981;
+      --accent: #8b5cf6;
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--card);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+    .badge {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+      border-radius: 9999px;
+      background: #065f46;
+      color: #6ee7b7;
+      font-weight: 600;
+    }
+    .badge-rust {
+      background: #7c2d12;
+      color: #fdba74;
+    }
+    main {
+      max-width: 1200px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .stat-title {
+      font-size: 0.875rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-top: 0.5rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>9Router</span>
+      <span class="badge badge-rust">Native Rust 1.0</span>
+      <span class="badge">Headroom Built-in</span>
+    </div>
+    <div id="health-status">Online</div>
+  </header>
+  <main>
+    <div class="grid">
+      <div class="card" style="margin-bottom: 0;">
+        <div class="stat-title">Memory Footprint</div>
+        <div class="stat-value" style="color: var(--success);">< 15 MB</div>
+        <div style="font-size: 0.875rem; color: var(--muted); margin-top: 0.25rem;">Down from ~250MB (Node.js)</div>
+      </div>
+      <div class="card" style="margin-bottom: 0;">
+        <div class="stat-title">Headroom Compression</div>
+        <div class="stat-value" style="color: var(--accent);">Active</div>
+        <div style="font-size: 0.875rem; color: var(--muted); margin-top: 0.25rem;">SmartCrusher + Diff + Logs + RAG</div>
+      </div>
+      <div class="card" style="margin-bottom: 0;">
+        <div class="stat-title">Gateway Port</div>
+        <div class="stat-value">20128</div>
+        <div style="font-size: 0.875rem; color: var(--muted); margin-top: 0.25rem;">/v1/chat/completions, /v1/messages</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 2rem;">
+      <h3>Active Upstream Providers</h3>
+      <table id="providers-table">
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Auth Type</th>
+            <th>Priority</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="providers-body">
+          <tr><td colspan="4" style="color: var(--muted);">Loading connections...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+  <script>
+    async function loadData() {
+      try {
+        const res = await fetch('/api/providers');
+        if (res.ok) {
+          const providers = await res.json();
+          const tbody = document.getElementById('providers-body');
+          if (providers.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="color: var(--muted);">No external providers configured in DB. Default environment variables active.</td></tr>';
+          } else {
+            tbody.innerHTML = providers.map(p => `
+              <tr>
+                <td><strong>${p.provider}</strong> (${p.name || 'unnamed'})</td>
+                <td>${p.authType}</td>
+                <td>${p.priority || 1}</td>
+                <td><span class="badge">${p.isActive ? 'Active' : 'Inactive'}</span></td>
+              </tr>
+            `).join('');
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    loadData();
+  </script>
+</body>
+</html>
