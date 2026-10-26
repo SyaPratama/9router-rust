@@ -26,6 +26,10 @@ See [CREDITS.md](./CREDITS.md) for full open-source project attributions (9Route
 ---
 ## ⚡ Performance Benchmark
 
+<div align="center">
+  <img src="./images/benchmark-dark.png" alt="9Router Performance Benchmark" width="100%"/>
+</div>
+
 **16.5x to 29x the throughput of 9Router (Next.js) and 43x of OmniRoute, with a ninth of 9Router's idle memory.**
 
 *Tested on `/api/health` across 1,000 HTTP requests at concurrency 50.*

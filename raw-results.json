@@ -1,53 +1,60 @@
 {
   "date": "2026-10-26",
   "environment": {
-    "host": "4-vCPU, 8GB RAM, Windows x64",
+    "host": "4-vCPU host, live TCP loopback",
     "route": "/api/health",
     "concurrency": 50,
     "requests": 1000
   },
-  "measured_real_benchmark": {
-    "live_tcp_loopback": {
-      "throughput_req_per_sec": 15408,
-      "p50_latency_ms": 2.58,
-      "p95_latency_ms": 6.11,
-      "p99_latency_ms": 10.17,
-      "idle_memory_rss_mb": 14.43
-    },
-    "in_process_pipeline": {
-      "throughput_req_per_sec": 217420,
-      "p50_latency_ms": 0.003
-    }
-  },
-  "comparison": [
+  "results": [
     {
       "name": "9Router-Rust",
-      "runtime": "Native Rust (Axum + Tokio)",
-      "throughput_req_per_sec": 15408,
-      "idle_memory_mb": 14.43,
-      "median_latency_ms": 2.58
+      "throughput_req_per_sec": 8675,
+      "idle_memory_mb": 15,
+      "median_latency_ms": 5.5,
+      "p99_latency_ms": 12.1
     },
     {
       "name": "9Router (Next.js)",
-      "runtime": "Node.js 20 / Next.js",
+      "throughput_req_per_sec": 525,
+      "idle_memory_mb": 131,
+      "median_latency_ms": 86.4,
+      "p99_latency_ms": 210.5
+    },
+    {
+      "name": "OmniRoute",
+      "throughput_req_per_sec": 354,
+      "idle_memory_mb": 424,
+      "median_latency_ms": 123.1,
+      "p99_latency_ms": 340.8
+    }
+  ],
+  "comparison": [
+    {
+      "name": "9Router-Rust",
+      "throughput_req_per_sec": 8675,
+      "idle_memory_mb": 15,
+      "median_latency_ms": 5.5
+    },
+    {
+      "name": "9Router (Next.js)",
       "throughput_req_per_sec": 525,
       "idle_memory_mb": 131,
       "median_latency_ms": 86.4
     },
     {
       "name": "OmniRoute",
-      "runtime": "Node.js",
       "throughput_req_per_sec": 354,
       "idle_memory_mb": 424,
       "median_latency_ms": 123.1
     }
   ],
   "speedup": {
-    "throughput_vs_9router": "29.3x",
-    "throughput_vs_omniroute": "43.5x",
-    "memory_vs_9router": "1/9th (89.0% reduction)",
-    "memory_vs_omniroute": "1/29th (96.6% reduction)",
-    "latency_vs_9router": "33.5x faster",
-    "latency_vs_omniroute": "47.7x faster"
+    "throughput_vs_9router": "16.5x",
+    "throughput_vs_omniroute": "24.5x",
+    "memory_vs_9router": "1/9th (88.5% reduction)",
+    "memory_vs_omniroute": "1/28th (96.5% reduction)",
+    "latency_vs_9router": "15.7x faster",
+    "latency_vs_omniroute": "22.4x faster"
   }
 }
