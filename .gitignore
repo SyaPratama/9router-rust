@@ -102,3 +102,11 @@ graphify-out/*
 start-dev-silent.cjs
 debug.log
 .scratch/
+
+# Rust & SDD rules
+/target/
+/.speckit/
+/specs/
+/sdd/
+local://*.md
+*.rs.bk

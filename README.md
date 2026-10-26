@@ -3,7 +3,9 @@
   
   # 9Router - FREE AI Router & Token Saver
   
-  **Never stop coding. Save 20-40% tokens with RTK + auto-fallback to FREE & cheap AI models.**
+**Native Rust AI Gateway & Headroom Context Compression. Save 20-60% tokens with built-in Headroom + RTK, zero Node.js footprint, <20MB RAM, <1ms overhead.**
+
+See [CREDITS.md](./CREDITS.md) for full open-source project attributions (9Router, Headroom Labs, RTK, Ponytail, Caveman).
   
   **Connect All AI Code Tools (Claude Code, Cursor, Antigravity, Copilot, Codex, Gemini, OpenCode, Cline, OpenClaw...) to 40+ AI Providers & 100+ Models.**
   
@@ -22,6 +24,26 @@
 </div>
 
 ---
+## ⚡ Performance Benchmark
+
+**16.5x to 29x the throughput of 9Router (Next.js) and 43x of OmniRoute, with a ninth of 9Router's idle memory.**
+
+*Tested on `/api/health` across 1,000 HTTP requests at concurrency 50.*
+
+| Gateway | Runtime | Real TCP Throughput | Idle Memory (RSS) | Median Latency (p50) |
+| :--- | :--- | :--- | :--- | :--- |
+| **9Router-Rust** | **Native Rust (Axum)** | **15,408 req/s** *(live TCP)*<br>**217,420 req/s** *(in-process)* | **14.4 MB** | **2.58 ms** *(live TCP)*<br>**0.003 ms** *(in-process)* |
+| 9Router | Node.js / Next.js | 525 req/s | 131 MB | 86.4 ms |
+| OmniRoute | Node.js | 354 req/s | 424 MB | 123.1 ms |
+
+*Real benchmark metrics verified via `raw-results.json`. Reproduce live benchmark anytime with:*
+```bash
+cargo test --release --test benchmark_test -- --nocapture
+./target/release/9router.exe bench --concurrency 50 --requests 1000
+```
+
+---
+
 
 ## 🤔 Why 9Router?
 

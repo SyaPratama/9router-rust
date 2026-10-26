@@ -1,0 +1,43 @@
+[package]
+name = "router9"
+version = "1.0.0"
+edition = "2021"
+description = "Native Rust AI Gateway with built-in Headroom Context Compression"
+license = "MIT OR Apache-2.0"
+authors = ["9Router Contributors", "Headroom Labs Contributors"]
+
+[[bin]]
+name = "9router"
+path = "src/main.rs"
+
+[lib]
+name = "router9"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { version = "1.43", features = ["full"] }
+axum = { version = "0.8", features = ["macros", "ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "timeout", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rusqlite = { version = "0.33", features = ["bundled", "backup"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.26"
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-trait = "0.1"
+sha2 = "0.10"
+futures-util = "0.3"
+bytes = "1.0"
+hex = "0.4"
+regex = "1.11"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.5", features = ["derive"] }
+rust-embed = "8.5"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.12", features = ["v4", "fast-rng"] }
+
+[dev-dependencies]
+tempfile = "3.16"
