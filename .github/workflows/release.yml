@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to release (e.g. v1.0.1)"
-        required: true
+        description: "Tag to release (leave empty to use latest git tag)"
+        required: false
         type: string
 
 permissions:
@@ -30,22 +30,37 @@ jobs:
       tag: ${{ steps.tagger.outputs.tag }}
       version: ${{ steps.tagger.outputs.version }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Resolve Tag
         id: tagger
         shell: bash
         run: |
+          git fetch --tags --force 2>/dev/null || true
+
           if [ -n "${{ inputs.tag }}" ]; then
             TAG="${{ inputs.tag }}"
-          else
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
+          else
+            # Find latest semver tag in repo
+            TAG=$(git tag -l 'v*' | grep -E '^v[0-9]+' | sort -V | tail -1 || true)
+            if [ -z "$TAG" ]; then
+              CARGO_VER=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f 2)
+              TAG="v$CARGO_VER"
+            fi
           fi
+
           if [[ "$TAG" != v* ]]; then
             TAG="v$TAG"
           fi
           VERSION="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Releasing manual tag: $TAG (version: $VERSION)"
+          echo "Target Release Tag: $TAG (version: $VERSION)"
 
   # -------------------------------------------------------------------------
   # 2. BUILD BINARIES: Cross-compile for Linux, Windows, and macOS
@@ -75,7 +90,7 @@ jobs:
             use_cross: false
             archive_ext: tar.gz
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             use_cross: false
             archive_ext: tar.gz
 
