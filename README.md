@@ -207,11 +207,39 @@ Navigate to [http://localhost:20128/dashboard](http://localhost:20128/dashboard)
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Gateway health status, uptime, and engine info |
+| `GET` | `/api/summary` | Dashboard summary of providers, combos, keys, settings, and usage |
+| `GET` | `/api/auth/status` | Local authentication/session capability status |
 | `GET/POST`| `/api/settings` | Read or update gateway settings |
 | `GET/POST`| `/api/providers` | Manage provider accounts and credentials |
 | `GET/POST`| `/api/combos` | Configure fallback model chains |
 | `GET/POST`| `/api/keys` | Manage API keys and access restrictions |
 | `GET` | `/api/usage/stats` | View token usage, costs, and request counts |
+
+### Dashboard
+
+The embedded dashboard at `/dashboard` now provides functional management workflows
+for providers, fallback combos, API keys, runtime settings, and usage metrics. Changes
+are persisted to the configured SQLite database and are immediately reflected in the
+overview counters.
+
+Dashboard URLs follow the upstream page structure, including `/dashboard/providers`,
+`/dashboard/combos`, `/dashboard/usage`, `/dashboard/quota`, `/dashboard/token-saver`,
+`/dashboard/cli-tools`, `/dashboard/translator`, `/dashboard/console-log`,
+`/dashboard/media-providers/web`, and `/dashboard/proxy-pools`.
+
+The Rust request architecture mirrors the upstream process boundaries:
+
+```text
+HTTP request
+  -> security middleware
+  -> src/app route group
+     -> dashboard / admin / auth / v1
+  -> compatibility handler
+  -> translator and routing engine
+  -> provider executor and fallback chain
+  -> usage persistence
+  -> streaming or JSON response
+```
 
 ---
 
