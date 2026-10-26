@@ -284,7 +284,8 @@ This repository includes GitHub Actions workflows:
 
 | Workflow | File | Purpose |
 |---|---|---|
-| Docker Publish | [`.github/workflows/docker-publish.yml`](./.github/workflows/docker-publish.yml) | Build and push multi-arch Docker images |
+| **Release & Packages** | [`.github/workflows/release.yml`](./.github/workflows/release.yml) | **Auto-tagging, cross-platform binary releases, & GHCR packages** |
+| Docker Publish | [`.github/workflows/docker-publish.yml`](./.github/workflows/docker-publish.yml) | Manual multi-arch Docker image builder |
 | GitBook Pages | [`.github/workflows/gitbook-pages.yml`](./.github/workflows/gitbook-pages.yml) | Deploy documentation site |
 | Tray Binaries | [`.github/workflows/tray-binaries.yml`](./.github/workflows/tray-binaries.yml) | Build platform-specific tray app binaries |
 

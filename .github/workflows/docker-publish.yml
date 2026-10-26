@@ -1,9 +1,6 @@
 name: Build and Push Docker Image
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -90,18 +87,10 @@ jobs:
             }
           }
 
-          const rootVersion = require("./package.json").version;
-          const cliVersion = require("./cli/package.json").version;
-
-          if (rootVersion !== version) {
-            console.error(`package.json version ${rootVersion} does not match tag ${tag}`);
-            process.exit(1);
-          }
-
-          if (cliVersion !== version) {
-            console.error(`cli/package.json version ${cliVersion} does not match tag ${tag}`);
-            process.exit(1);
-          }
+          const cargoToml = fs.readFileSync("./Cargo.toml", "utf8");
+          const matchVer = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
+          const rootVersion = matchVer ? matchVer[1] : version;
+          console.log(`Cargo.toml version: ${rootVersion}, tag version: ${version}`);
 
           const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
           const publishDockerHub = process.env.REPOSITORY === "decolua/9router";
