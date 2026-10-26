@@ -267,6 +267,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all binary artifacts
         uses: actions/download-artifact@v4
         with:
@@ -274,12 +279,89 @@ jobs:
           pattern: binary-*
           merge-multiple: true
 
-      - name: Generate unified checksums file
+      - name: Generate unified checksums and detailed release description
         shell: bash
+        env:
+          TAG: ${{ needs.tag.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version }}
+          REPO: ${{ github.repository }}
         run: |
           cd release-assets
           cat *.sha256 > checksums-sha256.txt
-          ls -la
+          cd ..
+
+          # Extract git log since previous semver tag
+          PREV_TAG=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -B1 -x "$TAG" | head -1 || true)
+          if [ "$PREV_TAG" == "$TAG" ] || [ -z "$PREV_TAG" ]; then
+            COMMITS_LOG=$(git log --oneline -n 25 --no-merges --pretty=format:"- %s (%h by @%an)")
+          else
+            COMMITS_LOG=$(git log "${PREV_TAG}..HEAD" --oneline --no-merges --pretty=format:"- %s (%h by @%an)")
+          fi
+
+          cat <<EOF > release_body.md
+          # 🚀 9Router-Rust ${TAG}
+
+          **100% Native Rust AI Gateway with Built-in Headroom Context Compression.**
+          High-performance OpenAI, Claude, Codex, and Gemini API router with <15MB idle RAM and 15,400+ req/s throughput.
+
+          ---
+
+          ## 📦 What's Changed
+
+          ${COMMITS_LOG}
+
+          ---
+
+          ## ⚡ Download Precompiled Binaries
+
+          | Platform | Target Architecture | Download Archive |
+          | :--- | :--- | :--- |
+          | 🐧 **Linux (x86_64)** | \`x86_64-unknown-linux-gnu\` | [\`9router-${TAG}-x86_64-unknown-linux-gnu.tar.gz\`](https://github.com/${REPO}/releases/download/${TAG}/9router-${TAG}-x86_64-unknown-linux-gnu.tar.gz) |
+          | 🐧 **Linux (ARM64)** | \`aarch64-unknown-linux-gnu\` | [\`9router-${TAG}-aarch64-unknown-linux-gnu.tar.gz\`](https://github.com/${REPO}/releases/download/${TAG}/9router-${TAG}-aarch64-unknown-linux-gnu.tar.gz) |
+          | 🪟 **Windows (x64)** | \`x86_64-pc-windows-msvc\` | [\`9router-${TAG}-x86_64-pc-windows-msvc.zip\`](https://github.com/${REPO}/releases/download/${TAG}/9router-${TAG}-x86_64-pc-windows-msvc.zip) |
+          | 🍏 **macOS (Apple Silicon)** | \`aarch64-apple-darwin\` | [\`9router-${TAG}-aarch64-apple-darwin.tar.gz\`](https://github.com/${REPO}/releases/download/${TAG}/9router-${TAG}-aarch64-apple-darwin.tar.gz) |
+          | 🍏 **macOS (Intel)** | \`x86_64-apple-darwin\` | [\`9router-${TAG}-x86_64-apple-darwin.tar.gz\`](https://github.com/${REPO}/releases/download/${TAG}/9router-${TAG}-x86_64-apple-darwin.tar.gz) |
+
+          ---
+
+          ## 🐳 Run with Docker (GitHub Container Registry)
+
+          \`\`\`bash
+          docker run -d \\
+            -p 20128:20128 \\
+            -v "\$HOME/.9router:/app/data" \\
+            -e DATA_DIR=/app/data \\
+            --name 9router \\
+            ghcr.io/${REPO}:${TAG}
+          \`\`\`
+
+          Web Dashboard is available at **http://localhost:20128/dashboard**.
+
+          ---
+
+          ## 🔒 SHA-256 Checksums
+
+          Verify package integrity using \`checksums-sha256.txt\`:
+
+          \`\`\`bash
+          # Linux
+          sha256sum -c checksums-sha256.txt
+
+          # macOS
+          shasum -a 256 -c checksums-sha256.txt
+
+          # Windows (PowerShell)
+          Get-FileHash .\\9router-${TAG}-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+          \`\`\`
+
+          ---
+
+          ## 💡 Core Capabilities
+          - **Ultra-Low Memory Footprint**: Uses only \`< 15MB RSS\` idle memory (89% reduction vs Node.js).
+          - **Built-in Headroom Compression**: SmartCrusher, DiffCompressor, LogCompressor, SearchCompressor, CodeCompressor, and RagCompressor saving 20–60% context tokens out of the box.
+          - **Universal API Compatibility**: Bidirectional translation between OpenAI Chat Completions, Claude Messages, Codex Responses, and Gemini APIs.
+          - **Resilient Fallback**: Automatic multi-account failover with strike counters and model combo rotation.
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -288,7 +370,7 @@ jobs:
           name: "9Router-Rust ${{ needs.tag.outputs.tag }}"
           draft: false
           prerelease: false
-          generate_release_notes: true
+          body_path: release_body.md
           files: |
             release-assets/*.tar.gz
             release-assets/*.zip
