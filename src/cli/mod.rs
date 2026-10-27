@@ -12,10 +12,10 @@ pub struct Cli {
 pub enum Commands {
     /// Start the 9router AI gateway server
     Start {
-        #[arg(short, long, default_value_t = 20128)]
-        port: u16,
-        #[arg(long, default_value = "0.0.0.0")]
-        host: String,
+        #[arg(short, long)]
+        port: Option<u16>,
+        #[arg(long)]
+        host: Option<String>,
         #[arg(long)]
         daemon: bool,
     },

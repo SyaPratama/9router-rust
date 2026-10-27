@@ -20,11 +20,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::default();
 
     match cli.command.unwrap_or(Commands::Start {
-        port: config.port,
-        host: config.host.clone(),
+        port: None,
+        host: None,
         daemon: false,
     }) {
         Commands::Start { port, host, daemon: _ } => {
+            let port = port.unwrap_or(config.port);
+            let host = host.unwrap_or(config.host);
             let db_path = config.data_dir.join("db.sqlite");
             tracing::info!("Initializing SQLite storage at {:?}", db_path);
             let pool = init_pool(&db_path)?;

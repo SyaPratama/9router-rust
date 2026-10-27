@@ -48,9 +48,42 @@ impl UsageRepo {
         Ok(())
     }
 
+    pub fn history(conn: &Connection, limit: usize) -> Result<Vec<UsageRecord>> {
+        let mut stmt = conn.prepare(
+            "SELECT timestamp, provider, model, connectionId, apiKey, endpoint,
+                    promptTokens, completionTokens, cost, status, tokens, meta
+             FROM usageHistory
+             ORDER BY id DESC
+             LIMIT ?1",
+        )?;
+
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(UsageRecord {
+                timestamp: row.get(0)?,
+                provider: row.get(1)?,
+                model: row.get(2)?,
+                connection_id: row.get(3)?,
+                api_key: row.get(4)?,
+                endpoint: row.get(5)?,
+                prompt_tokens: row.get(6)?,
+                completion_tokens: row.get(7)?,
+                cost: row.get(8)?,
+                status: row.get(9)?,
+                tokens: row.get(10)?,
+                meta: row.get(11)?,
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
     pub fn stats(conn: &Connection) -> Result<serde_json::Value> {
         let mut stmt = conn.prepare(
-            "SELECT COUNT(*), SUM(promptTokens), SUM(completionTokens), SUM(cost) FROM usageHistory"
+            "SELECT COUNT(*), SUM(promptTokens), SUM(completionTokens), SUM(cost) FROM usageHistory",
         )?;
 
         let row = stmt.query_row([], |r| {
