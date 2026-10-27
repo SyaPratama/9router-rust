@@ -195,8 +195,8 @@ Full attributions are documented in [CREDITS.md](./CREDITS.md):
 
 - **Original Creator & Maintainers**: [decolua](https://github.com/decolua) and 9Router contributors.
 - **Native Rust & Headroom Refactor**: [SyaPratama](https://github.com/SyaPratama).
-- **[Headroom Labs](https://github.com/headroomlabs-ai/headroom)** — Foundational context compression algorithms (Apache 2.0).
-- **[RTK](https://github.com/rtk-ai/rtk)** — Token-saving heuristics and deduplication patterns.
+- **[Headroom Labs](https://github.com/headroomlabs-ai/headroom)**: Foundational context compression algorithms (Apache 2.0).
+- **[RTK](https://github.com/rtk-ai/rtk)**: Token-saving heuristics and deduplication patterns.
 - **[Ponytail](https://github.com/DietrichGebert/ponytail)** by [@DietrichGebert](https://github.com/DietrichGebert).
 - **[Caveman](https://github.com/JuliusBrussee/caveman)** by [@JuliusBrussee](https://github.com/JuliusBrussee).
 
