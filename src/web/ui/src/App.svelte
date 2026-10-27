@@ -139,6 +139,31 @@
   let modalData = $state({});
   let notification = $state(null);
   let popupWindow = null;
+  let modalReturnFocus = null;
+
+  $effect(() => {
+    if (!modalType) {
+      modalReturnFocus?.focus();
+      modalReturnFocus = null;
+      return;
+    }
+    void modalData.authUrl;
+    void modalData.error;
+    modalReturnFocus ||= document.activeElement;
+    (document.querySelector('[role="dialog"] input:not([disabled])') || document.querySelector('[role="dialog"] button:not([disabled]), [role="dialog"] a[href]'))?.focus();
+  });
+
+  function handleModalKeydown(event) {
+    if (!modalType) return;
+    if (event.key === 'Escape') { modalType = null; return; }
+    if (event.key !== 'Tab') return;
+    const dialog = document.querySelector('[role="dialog"]');
+    const controls = [...(dialog?.querySelectorAll('input:not([disabled]), button:not([disabled]), a[href], select:not([disabled]), textarea:not([disabled])') || [])].filter(control => control.offsetParent !== null);
+    if (!controls.length) { event.preventDefault(); dialog?.focus(); return; }
+    const index = controls.indexOf(document.activeElement);
+    if (index < 0 || (event.shiftKey && index === 0)) { event.preventDefault(); controls[event.shiftKey ? controls.length - 1 : 0].focus(); }
+    else if (!event.shiftKey && index === controls.length - 1) { event.preventDefault(); controls[0].focus(); }
+  }
 
   // -------------------------------------------------------------
   // Helpers & Derived State
@@ -431,61 +456,23 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function openOAuthPopup(url) {
-    if (!url) return;
-    try {
-      popupWindow = window.open(
-        url,
-        '_blank',
-        'width=600,height=700,status=no,toolbar=no,menubar=no,location=yes,resizable=yes'
-      );
-      if (popupWindow && !popupWindow.closed) {
-        popupWindow.focus();
-      }
-    } catch (err) {
-      console.warn('Popup window error or blocked:', err);
-    }
-  }
-
-  function openAddConnection(providerId) {
+  async function openAddConnection(providerId) {
     const p = providerRegistry.find(item => item.id === providerId) || selectedProvider;
     const isOAuth = p.category === 'oauth';
-    const origin = window.location.origin;
-    const redirectUri = encodeURIComponent(`${origin}/callback`);
-
-    let authUrl = '';
-    if (providerId === 'antigravity') {
-      authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&redirect_uri=${redirectUri}&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+openid+email+profile&access_type=offline&prompt=consent`;
-    } else if (providerId === 'openai' || providerId === 'codex') {
-      authUrl = `https://auth.openai.com/oauth/authorize?response_type=code&client_id=9router&redirect_uri=${redirectUri}&scope=openid+profile+email`;
-    } else if (providerId === 'claude') {
-      authUrl = `https://claude.ai/oauth/authorize?response_type=code&client_id=9router&redirect_uri=${redirectUri}&scope=user`;
-    } else if (providerId === 'cursor') {
-      authUrl = `https://authenticator.cursor.sh/auth/connect?redirect_uri=${redirectUri}`;
-    } else if (providerId === 'github' || providerId === 'copilot') {
-      authUrl = `https://github.com/login/oauth/authorize?client_id=Iv1.b507a08c87ecfe98&redirect_uri=${redirectUri}&scope=read:user`;
-    } else if (providerId === 'zed') {
-      authUrl = `https://zed.dev/oauth/authorize?client_id=9router&redirect_uri=${redirectUri}&response_type=code`;
-    } else if (providerId === 'qoder') {
-      authUrl = `https://qoder.cloud/oauth/authorize?client_id=9router&redirect_uri=${redirectUri}&response_type=code`;
-    } else {
-      authUrl = `https://auth.${providerId}.com/oauth/authorize?response_type=code&client_id=9router&redirect_uri=${redirectUri}&scope=user`;
-    }
-
     modalType = 'add-connection';
-    modalData = {
-      provider: providerId,
-      mode: isOAuth ? 'oauth' : 'apikey',
-      authUrl,
-      callbackUrl: '',
-      copied: false,
-      isConnecting: false,
-      name: '',
-      apiKey: ''
-    };
+    modalData = { provider: providerId, mode: isOAuth ? 'oauth' : 'apikey', authUrl: '', copied: false, name: '', apiKey: '', error: '' };
+    if (!isOAuth) return;
 
-    if (isOAuth) {
-      openOAuthPopup(authUrl);
+    popupWindow = window.open('', '_blank', 'width=600,height=700,status=no,toolbar=no,menubar=no,location=yes,resizable=yes');
+    try {
+      const response = await fetch(`/api/oauth/${encodeURIComponent(providerId)}/start`, { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `Authorization setup failed (${response.status})`);
+      modalData.authUrl = result.authUrl;
+      if (popupWindow && !popupWindow.closed) popupWindow.location.href = result.authUrl;
+    } catch (error) {
+      if (popupWindow && !popupWindow.closed) popupWindow.close();
+      modalData.error = error.message || 'Authorization could not be started.';
     }
   }
 
@@ -499,62 +486,6 @@
     }, 2000);
   }
 
-  async function handleConnectOAuth() {
-    const cb = (modalData.callbackUrl || '').trim();
-    if (!cb) return;
-
-    modalData.isConnecting = true;
-    try {
-      let code = '';
-      let accessToken = '';
-      let email = `${modalData.provider || selectedProvider.id}@oauth.user`;
-      try {
-        const parsed = new URL(cb, window.location.origin);
-        code = parsed.searchParams.get('code') || '';
-        accessToken = parsed.searchParams.get('access_token') || '';
-        const emailParam = parsed.searchParams.get('email') || parsed.searchParams.get('user_id');
-        if (emailParam) email = emailParam;
-      } catch {
-        code = cb;
-      }
-
-      const payload = {
-        id: `conn-${Date.now()}`,
-        provider: modalData.provider || selectedProvider.id,
-        authType: 'oauth',
-        name: email,
-        email: email,
-        priority: getProviderConnections(modalData.provider || selectedProvider.id).length + 1,
-        isActive: true,
-        testStatus: 'active',
-        accessToken: accessToken || (code ? `oauth_${code.slice(0, 32)}` : 'oauth_token_active'),
-        code: code || undefined,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      const res = await fetch('/api/providers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        showToast('Connected successfully.');
-        loadProviders();
-        modalType = null;
-        if (popupWindow && !popupWindow.closed) {
-          try { popupWindow.close(); } catch {}
-        }
-      } else {
-        showToast('Failed to save connection', 'error');
-      }
-    } catch (err) {
-      showToast('Failed to connect: ' + err.message, 'error');
-    } finally {
-      if (modalData) modalData.isConnecting = false;
-    }
-  }
 
   async function toggleConnection(conn) {
     const updated = { ...conn, isActive: !conn.isActive };
@@ -677,13 +608,11 @@
     if (activeView === 'usage') refreshRecentUsage(false);
 
     function handleOAuthMessage(event) {
-      if (event.data?.type === 'oauth_callback' && event.data?.data) {
-        const { code, token, fullUrl } = event.data.data;
-        if (modalType === 'add-connection' && modalData) {
-          modalData.callbackUrl = fullUrl || (code ? `${window.location.origin}/callback?code=${code}` : '');
-          handleConnectOAuth();
-        }
-      }
+      if (event.origin !== window.location.origin || event.data?.type !== 'oauth_callback' || event.data?.success !== true) return;
+      if (modalType !== 'add-connection' || event.data.provider !== modalData?.provider) return;
+      showToast('Account connected.');
+      modalType = null;
+      loadProviders();
     }
 
     window.addEventListener('message', handleOAuthMessage);
@@ -696,7 +625,7 @@
   });
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && modalType) modalType = null; }} />
+<svelte:window onkeydown={handleModalKeydown} />
 
 {#if notification}
   <div class="toast-popup {notification.type}">
@@ -990,9 +919,9 @@
                   <span class="connection-pill {status.connected ? 'connected' : ''}">
                     {status.label}
                   </span>
-                  <label class="switch" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                  <label class="switch">
                     <input
-                      type="checkbox"
+                      type="checkbox" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}
                       checked={status.active}
                       onchange={() => {
                         const conns = getProviderConnections(provider.id);
@@ -1038,9 +967,9 @@
                   <span class="connection-pill {status.connected ? 'connected' : ''}">
                     {status.label}
                   </span>
-                  <label class="switch" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                  <label class="switch">
                     <input
-                      type="checkbox"
+                      type="checkbox" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}
                       checked={status.active}
                       onchange={() => {
                         const conns = getProviderConnections(provider.id);
@@ -1086,9 +1015,9 @@
                   <span class="connection-pill {status.connected ? 'connected' : ''}">
                     {status.label}
                   </span>
-                  <label class="switch" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                  <label class="switch">
                     <input
-                      type="checkbox"
+                      type="checkbox" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}
                       checked={status.active}
                       onchange={() => {
                         const conns = getProviderConnections(provider.id);
@@ -1268,17 +1197,17 @@
 
             <div style="display: flex; flex-direction: column; gap: 14px;">
               <div>
-                <label style="font-size: 12px; color: var(--muted); font-weight: 500;">OpenAI-Compatible Local Endpoint</label>
+                <label for="endpoint-openai" style="font-size: 12px; color: var(--muted); font-weight: 500;">OpenAI-Compatible Local Endpoint</label>
                 <div style="display: flex; gap: 8px; margin-top: 4px;">
-                  <input type="text" readonly value="http://localhost:20129/v1" />
+                  <input id="endpoint-openai" type="text" readonly value="http://localhost:20129/v1" />
                   <button onclick={() => copyText('http://localhost:20129/v1')}>Copy</button>
                 </div>
               </div>
 
               <div>
-                <label style="font-size: 12px; color: var(--muted); font-weight: 500;">Anthropic Messages Endpoint</label>
+                <label for="endpoint-anthropic" style="font-size: 12px; color: var(--muted); font-weight: 500;">Anthropic Messages Endpoint</label>
                 <div style="display: flex; gap: 8px; margin-top: 4px;">
-                  <input type="text" readonly value="http://localhost:20129/v1/messages" />
+                  <input id="endpoint-anthropic" type="text" readonly value="http://localhost:20129/v1/messages" />
                   <button onclick={() => copyText('http://localhost:20129/v1/messages')}>Copy</button>
                 </div>
               </div>
@@ -1975,15 +1904,15 @@
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
               <div>
-                <label style="font-size: 12px; color: var(--muted);">Listening Port</label>
-                <input type="number" bind:value={settings.port} style="margin-top: 4px;" />
+                <label for="settings-port" style="font-size: 12px; color: var(--muted);">Listening Port</label>
+                <input id="settings-port" type="number" bind:value={settings.port} style="margin-top: 4px;" />
               </div>
 
               <div>
-                <label style="font-size: 12px; color: var(--muted);">Require Login</label>
+                <label for="require-login-setting" style="font-size: 12px; color: var(--muted);">Require Login</label>
                 <div style="margin-top: 8px;">
                   <label class="switch">
-                    <input type="checkbox" bind:checked={settings.requireLogin} />
+                    <input id="require-login-setting" type="checkbox" bind:checked={settings.requireLogin} />
                     <span class="slider"></span>
                   </label>
                 </div>
@@ -2012,101 +1941,40 @@
 
 <!-- MODALS -->
 {#if modalType === 'add-connection' && modalData.mode === 'oauth'}
-  <!-- 100% PARITY OAUTH CONNECTION MODAL (EXACT MATCH FOR IMAGE #1) -->
-  <div class="modal" onclick={() => modalType = null} role="presentation">
-    <div class="modal-card oauth-modal-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="oauth-popup-text">
-      <!-- WAITING FOR POPUP AUTHORIZATION (CLICKABLE BUTTON TO LAUNCH/RE-FOCUS POPUP) -->
-      <a
-        href={modalData.authUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="oauth-auth-box oauth-auth-box-link"
-        title="Open authorization page in browser"
-        aria-label="Open authorization page"
-      >
-        <div class="oauth-spinner" aria-hidden="true"></div>
-        <span id="oauth-popup-text" class="oauth-wait-text">Waiting for popup authorization...</span>
-        <span class="material-symbols-outlined" style="margin-left: auto; font-size: 16px; color: var(--muted-dark);">open_in_new</span>
-      </a>
-
-      <!-- OR PASTE CALLBACK URL MANUALLY DIVIDER -->
-      <div class="oauth-divider">
-        <div class="oauth-divider-line"></div>
-        <span class="oauth-divider-text">OR PASTE CALLBACK URL MANUALLY</span>
-        <div class="oauth-divider-line"></div>
-      </div>
-
-      <!-- STEP 1: OPEN THIS URL IN YOUR BROWSER -->
-      <div class="oauth-step">
-        <label for="oauth-step1-input" class="oauth-step-label">Step 1: Open this URL in your browser</label>
-        <div class="oauth-url-row">
-          <input
-            id="oauth-step1-input"
-            type="text"
-            readonly
-            value={modalData.authUrl}
-            class="oauth-mono-input"
-            onclick={(e) => { e.currentTarget.select(); }}
-          />
-          <a
-            href={modalData.authUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="oauth-copy-btn"
-            title="Open in browser"
-          >
-            <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
-            <span>Open</span>
-          </a>
-          <button type="button" class="oauth-copy-btn" onclick={() => copyAuthUrl(modalData.authUrl)} title="Copy URL">
-            <span class="material-symbols-outlined" style="font-size: 16px;">
-              {modalData.copied ? 'check' : 'content_copy'}
-            </span>
-            <span>{modalData.copied ? 'Copied' : 'Copy'}</span>
-          </button>
+  <div class="modal" onpointerdown={(event) => { if (event.target === event.currentTarget) modalType = null; }} role="presentation">
+    <div class="modal-card oauth-modal-card" role="dialog" aria-modal="true" aria-labelledby="oauth-popup-text" tabindex="-1">
+      {#if modalData.error}
+        <p class="notice-banner warn" role="alert">{modalData.error}</p>
+        <div class="oauth-actions-row">
+          <button type="button" class="ghost sm" onclick={() => openAddConnection(modalData.provider)}>Retry</button>
+          <button type="button" class="oauth-btn-cancel ghost" onclick={() => modalType = null}>Close</button>
         </div>
-      </div>
-
-      <!-- STEP 2: PASTE THE CALLBACK URL HERE -->
-      <div class="oauth-step">
-        <label for="oauth-step2-input" class="oauth-step-label">Step 2: Paste the callback URL here</label>
-        <p class="oauth-step-desc">After authorization, copy the full URL from your browser.</p>
-        <input
-          id="oauth-step2-input"
-          type="text"
-          placeholder="http://localhost:20128/callback?code=..."
-          bind:value={modalData.callbackUrl}
-          class="oauth-mono-input"
-        />
-      </div>
-
-      <!-- ACTIONS: CONNECT & CANCEL -->
-      <div class="oauth-actions-row">
-        <button
-          type="button"
-          class="oauth-btn-connect {modalData.callbackUrl?.trim() ? 'primary' : 'disabled'}"
-          disabled={!modalData.callbackUrl?.trim() || modalData.isConnecting}
-          onclick={handleConnectOAuth}
-        >
-          {modalData.isConnecting ? 'Connecting...' : 'Connect'}
-        </button>
-        <button type="button" class="oauth-btn-cancel ghost" onclick={() => modalType = null}>
-          Cancel
-        </button>
-      </div>
-
-      {#if selectedProvider.category !== 'oauth'}
-        <div style="margin-top: 8px; text-align: center;">
-          <button type="button" class="ghost sm" onclick={() => modalData.mode = 'apikey'}>
-            Or enter API Key directly
-          </button>
+      {:else if modalData.authUrl}
+        <a href={modalData.authUrl} target="_blank" rel="noopener noreferrer" class="oauth-auth-box oauth-auth-box-link" aria-label="Open provider authorization">
+          <div class="oauth-spinner" aria-hidden="true"></div>
+          <span id="oauth-popup-text" class="oauth-wait-text">Finish sign-in with the provider</span>
+          <span class="material-symbols-outlined" aria-hidden="true">open_in_new</span>
+        </a>
+        <div class="oauth-step">
+          <label for="oauth-step1-input" class="oauth-step-label">Authorization URL</label>
+          <div class="oauth-url-row">
+            <input id="oauth-step1-input" type="text" readonly value={modalData.authUrl} class="oauth-mono-input" onclick={(e) => e.currentTarget.select()} />
+            <button type="button" class="oauth-copy-btn" onclick={() => copyAuthUrl(modalData.authUrl)}>{modalData.copied ? 'Copied' : 'Copy'}</button>
+          </div>
         </div>
+        <p class="oauth-step-desc" role="status">The callback exchanges the authorization code on this server. Tokens are never sent to the browser.</p>
+        <div class="oauth-actions-row">
+          <button type="button" class="oauth-btn-cancel ghost" onclick={() => modalType = null}>Close</button>
+        </div>
+      {:else}
+        <p id="oauth-popup-text" role="status">Preparing provider sign-in…</p>
+        <button type="button" class="oauth-btn-cancel ghost" onclick={() => modalType = null}>Cancel</button>
       {/if}
     </div>
   </div>
 {:else if modalType}
-  <div class="modal" onclick={() => modalType = null} role="presentation">
-    <div class="modal-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+  <div class="modal" onpointerdown={(event) => { if (event.target === event.currentTarget) modalType = null; }} role="presentation">
+    <div class="modal-card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h3 style="font-size: 16px;">
           {#if modalType === 'custom-provider'}
@@ -2131,62 +1999,57 @@
       <div class="modal-body">
         {#if modalType === 'custom-provider'}
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Provider Display Name</label>
-            <input type="text" placeholder="e.g. My Custom LLM" bind:value={modalData.name} />
+            <label for="custom-provider-name" style="font-size: 12px; color: var(--muted);">Provider Display Name</label>
+            <input id="custom-provider-name" type="text" placeholder="e.g. My Custom LLM" bind:value={modalData.name} />
           </div>
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Provider ID</label>
-            <input type="text" placeholder="e.g. my-custom-llm" bind:value={modalData.id} />
+            <label for="custom-provider-id" style="font-size: 12px; color: var(--muted);">Provider ID</label>
+            <input id="custom-provider-id" type="text" placeholder="e.g. my-custom-llm" bind:value={modalData.id} />
           </div>
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Base URL</label>
-            <input type="text" placeholder="https://api.example.com/v1" bind:value={modalData.baseUrl} />
+            <label for="custom-provider-url" style="font-size: 12px; color: var(--muted);">Base URL</label>
+            <input id="custom-provider-url" type="text" placeholder="https://api.example.com/v1" bind:value={modalData.baseUrl} />
           </div>
           <div>
-            <label style="font-size: 12px; color: var(--muted);">API Key</label>
-            <input type="password" placeholder="sk-..." bind:value={modalData.apiKey} />
+            <label for="custom-provider-key" style="font-size: 12px; color: var(--muted);">API Key</label>
+            <input id="custom-provider-key" type="password" placeholder="sk-..." bind:value={modalData.apiKey} />
           </div>
         {:else if modalType === 'add-connection'}
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Connection Name / Email</label>
-            <input type="text" placeholder="Account identifier" bind:value={modalData.name} />
+            <label for="connection-name" style="font-size: 12px; color: var(--muted);">Connection Name / Email</label>
+            <input id="connection-name" type="text" placeholder="Account identifier" bind:value={modalData.name} />
           </div>
           <div>
-            <label style="font-size: 12px; color: var(--muted);">API Key / Token</label>
-            <input type="password" placeholder="API key or OAuth token" bind:value={modalData.apiKey} />
-          </div>
-          <div style="margin-top: 6px;">
-            <button type="button" class="ghost sm" onclick={() => modalData.mode = 'oauth'}>
-              Or connect via browser OAuth popup
-            </button>
+            <label for="connection-key" style="font-size: 12px; color: var(--muted);">API Key</label>
+            <input id="connection-key" type="password" placeholder="API key" bind:value={modalData.apiKey} />
           </div>
         {:else if modalType === 'add-model'}
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Model ID</label>
-            <input type="text" placeholder="e.g. gpt-4o-custom" bind:value={modalData.modelId} />
+            <label for="model-id" style="font-size: 12px; color: var(--muted);">Model ID</label>
+            <input id="model-id" type="text" placeholder="e.g. gpt-4o-custom" bind:value={modalData.modelId} />
           </div>
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Model Display Name</label>
-            <input type="text" placeholder="e.g. GPT-4o Custom" bind:value={modalData.modelName} />
+            <label for="model-name" style="font-size: 12px; color: var(--muted);">Model Display Name</label>
+            <input id="model-name" type="text" placeholder="e.g. GPT-4o Custom" bind:value={modalData.modelName} />
           </div>
         {:else if modalType === 'create-key'}
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Key Name</label>
-            <input type="text" placeholder="e.g. Cursor IDE Key" bind:value={modalData.name} />
+            <label for="key-name" style="font-size: 12px; color: var(--muted);">Key Name</label>
+            <input id="key-name" type="text" placeholder="e.g. Cursor IDE Key" bind:value={modalData.name} />
           </div>
         {:else if modalType === 'create-combo'}
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Combo Name</label>
-            <input type="text" placeholder="e.g. auto-fast" bind:value={modalData.name} />
+            <label for="combo-name" style="font-size: 12px; color: var(--muted);">Combo Name</label>
+            <input id="combo-name" type="text" placeholder="e.g. auto-fast" bind:value={modalData.name} />
           </div>
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Model Chain (comma separated)</label>
-            <input type="text" placeholder="antigravity/claude-sonnet-4, openai/gpt-4o" bind:value={modalData.models} />
+            <label for="combo-models" style="font-size: 12px; color: var(--muted);">Model Chain (comma separated)</label>
+            <input id="combo-models" type="text" placeholder="antigravity/claude-sonnet-4, openai/gpt-4o" bind:value={modalData.models} />
           </div>
         {:else if modalType === 'add-proxy'}
           <div>
-            <label style="font-size: 12px; color: var(--muted);">Proxy URL</label>
-            <input type="text" placeholder="socks5://127.0.0.1:1080" bind:value={modalData.url} />
+            <label for="proxy-url" style="font-size: 12px; color: var(--muted);">Proxy URL</label>
+            <input id="proxy-url" type="text" placeholder="socks5://127.0.0.1:1080" bind:value={modalData.url} />
           </div>
         {/if}
       </div>

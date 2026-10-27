@@ -9,7 +9,10 @@ use crate::api::middleware::{security_middleware, AppState};
 use crate::routing::RoutingEngine;
 
 pub fn build_router(engine: Arc<RoutingEngine>) -> Router {
-    let state = AppState { engine };
+    let state = AppState {
+        engine,
+        oauth_sessions: Arc::default(),
+    };
 
     Router::new()
         .merge(v1::routes())

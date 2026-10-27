@@ -39,6 +39,8 @@ rust-embed = "8.5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.12", features = ["v4", "fast-rng"] }
 urlencoding = "2"
+url = "2.5"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3.16"

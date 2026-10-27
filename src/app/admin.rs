@@ -18,6 +18,8 @@ pub fn routes() -> Router<AppState> {
             "/settings",
             get(handlers::admin::get_settings).post(handlers::admin::update_settings),
         )
+        .route("/oauth/{provider}/start", post(handlers::oauth::start))
+        .route("/oauth/callback", get(handlers::oauth::callback))
         // Providers Catalog & Management
         .route("/providers/catalog", get(handlers::admin::get_provider_catalog))
         .route("/skills", get(handlers::admin::get_skills_catalog))

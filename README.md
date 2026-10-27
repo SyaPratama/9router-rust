@@ -47,12 +47,17 @@ Browse and configure all 142 supported providers across OAuth, Free Tier, and AP
   <img src="./images/9router.png" alt="9Router Providers Catalog" width="850"/>
 </div>
 
-### 2. Authentic OAuth Popup Authorization
-One-click browser popup authorization with automated callback listener and manual URL extraction fallback.
+### 2. Server-Side OAuth Connections
+Antigravity and Codex use server-generated authorization state, callback validation, code exchange, and provider account identity retrieval. Credentials stay in SQLite and are redacted from provider API responses. Other OAuth flows report unavailable until their provider-specific flow is implemented.
 
-<div align="center">
-  <img src="./images/oauth-modal.png" alt="OAuth Popup Authorization" width="550"/>
-</div>
+Register this exact callback URL with each OAuth client and configure the daemon before launch. Keep its host and port identical to the dashboard URL; change the example port to match `PORT`.
+
+```text
+ROUTER_OAUTH_REDIRECT_URI=http://127.0.0.1:20129/api/oauth/callback
+ANTIGRAVITY_OAUTH_CLIENT_ID=...
+ANTIGRAVITY_OAUTH_CLIENT_SECRET=...
+CODEX_OAUTH_CLIENT_ID=...
+```
 
 ### 3. Provider Models & Live Probing
 View active models, copy upstream IDs, and execute live capability probes directly from the dashboard.
