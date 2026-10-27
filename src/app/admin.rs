@@ -21,6 +21,7 @@ pub fn routes() -> Router<AppState> {
         // Providers Catalog & Management
         .route("/providers/catalog", get(handlers::admin::get_provider_catalog))
         .route("/skills", get(handlers::admin::get_skills_catalog))
+        .route("/skills/search", get(handlers::admin::search_github_skills))
         .route("/providers/test-batch", post(handlers::admin::test_batch_providers))
         .route("/providers/validate", post(handlers::admin::validate_provider_config))
         .route(

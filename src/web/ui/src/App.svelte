@@ -52,24 +52,52 @@
   // Search & Filters for Skills
   let skillSearch = $state('');
   let skillCategory = $state('all');
+  let skillSource = $state('curated'); // 'curated' | 'github'
+  let githubResults = $state([]);
+  let githubTotal = $state(0);
+  let githubPage = $state(1);
+  let githubLoading = $state(false);
+  let githubQuery = $state('');
 
   let skillCategories = $derived.by(() => {
-    const cats = new Set(agentSkillsList.map(s => s.category));
+    const list = skillSource === 'curated' ? agentSkillsList : githubResults;
+    const cats = new Set(list.map(s => s.category));
     return ['all', ...Array.from(cats)];
   });
 
   let filteredSkills = $derived.by(() => {
     const q = skillSearch.toLowerCase().trim();
-    return agentSkillsList.filter(s => {
+    const list = skillSource === 'curated' ? agentSkillsList : githubResults;
+    return list.filter(s => {
       const matchCat = skillCategory === 'all' || s.category === skillCategory;
       const matchSearch = !q ||
         s.name.toLowerCase().includes(q) ||
-        s.author.toLowerCase().includes(q) ||
-        s.description.toLowerCase().includes(q) ||
+        (s.author && s.author.toLowerCase().includes(q)) ||
+        (s.description && s.description.toLowerCase().includes(q)) ||
         (s.tags && s.tags.some(t => t.toLowerCase().includes(q)));
       return matchCat && matchSearch;
     });
   });
+
+  async function searchGitHubSkills(query, page = 1) {
+    githubLoading = true;
+    try {
+      const params = new URLSearchParams({ page: String(page), per_page: '30' });
+      if (query) params.set('q', query);
+      const resp = await fetch(`/api/skills/search?${params}`);
+      const data = await resp.json();
+      if (data.items) {
+        githubResults = page === 1 ? data.items : [...githubResults, ...data.items];
+        githubTotal = data.total_count || 0;
+        githubPage = page;
+        githubQuery = query;
+      }
+    } catch (e) {
+      console.error('GitHub skills search failed:', e);
+    } finally {
+      githubLoading = false;
+    }
+  }
 
   // Modals & Popups
   let modalType = $state(null); // 'custom-provider' | 'add-connection' | 'add-model' | 'create-combo' | 'create-key' | 'add-proxy'
@@ -1448,18 +1476,44 @@
         {:else if activeView === 'skills'}
           <div style="display: flex; flex-direction: column; gap: 14px;">
             <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-              <div class="search-input-wrap" style="flex: 1; min-width: 280px;">
-                <span class="material-symbols-outlined">search</span>
-                <input
-                  type="text"
-                  placeholder="Search agent skills, authors, tools, or tags..."
-                  bind:value={skillSearch}
-                />
+              <div style="display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">
+                <button class={skillSource === 'curated' ? 'sm primary' : 'sm ghost'} onclick={() => { skillSource = 'curated'; skillCategory = 'all'; }}>
+                  <span class="material-symbols-outlined" style="font-size: 15px;">star</span>
+                  Curated ({agentSkillsList.length})
+                </button>
+                <button class={skillSource === 'github' ? 'sm primary' : 'sm ghost'} onclick={() => { skillSource = 'github'; skillCategory = 'all'; if (!githubResults.length) searchGitHubSkills(''); }}>
+                  <span class="material-symbols-outlined" style="font-size: 15px;">language</span>
+                  GitHub Live ({githubTotal.toLocaleString()})
+                </button>
               </div>
+
+              {#if skillSource === 'github'}
+                <div class="search-input-wrap" style="flex: 1; min-width: 280px;">
+                  <span class="material-symbols-outlined">search</span>
+                  <input
+                    type="text"
+                    placeholder="Search 15,000+ agent skills on GitHub..."
+                    bind:value={skillSearch}
+                    onkeydown={(e) => { if (e.key === 'Enter') searchGitHubSkills(skillSearch); }}
+                  />
+                </div>
+                <button class="sm primary" onclick={() => searchGitHubSkills(skillSearch)} disabled={githubLoading}>
+                  {githubLoading ? 'Searching...' : 'Search GitHub'}
+                </button>
+              {:else}
+                <div class="search-input-wrap" style="flex: 1; min-width: 280px;">
+                  <span class="material-symbols-outlined">search</span>
+                  <input
+                    type="text"
+                    placeholder="Filter curated agent skills..."
+                    bind:value={skillSearch}
+                  />
+                </div>
+              {/if}
 
               <div style="width: 240px;">
                 <select bind:value={skillCategory}>
-                  <option value="all">All Categories ({agentSkillsList.length})</option>
+                  <option value="all">All Categories</option>
                   {#each skillCategories.filter(c => c !== 'all') as cat}
                     <option value={cat}>{cat}</option>
                   {/each}
@@ -1470,13 +1524,20 @@
             <div class="section-title-bar">
               <h2>
                 <span class="material-symbols-outlined" style="color:var(--mint);">extension</span>
-                Agent Skills Catalog ({filteredSkills.length})
+                {skillSource === 'curated' ? 'Curated' : 'GitHub Live'} Agent Skills ({filteredSkills.length}{skillSource === 'github' ? ` / ${githubTotal.toLocaleString()}` : ''})
               </h2>
               <a href="https://github.com/topics/agent-skills" target="_blank" rel="noopener noreferrer" class="btn ghost sm">
                 <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
                 github.com/topics/agent-skills
               </a>
             </div>
+
+            {#if githubLoading}
+              <div style="text-align: center; padding: 40px; color: var(--muted);">
+                <span class="material-symbols-outlined" style="font-size: 32px; animation: spin 1s linear infinite;">progress_activity</span>
+                <p>Searching GitHub repositories...</p>
+              </div>
+            {/if}
 
             <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
               {#each filteredSkills as skill (skill.id)}
@@ -1485,7 +1546,7 @@
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px;">
                       <div style="font-weight: 700; font-size: 14px; color: var(--text-strong);">{skill.name}</div>
                       <span class="badge" style="background: rgba(245, 158, 11, 0.12); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-size: 11px; white-space: nowrap;">
-                        ★ {(skill.stars).toLocaleString()}
+                        ★ {(skill.stars || 0).toLocaleString()}
                       </span>
                     </div>
 
@@ -1498,11 +1559,11 @@
                     </div>
 
                     <p class="muted" style="font-size: 12.5px; line-height: 1.5; margin-bottom: 12px;">
-                      {skill.description}
+                      {skill.description || 'No description available.'}
                     </p>
 
                     <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px;">
-                      {#each skill.tags as tag}
+                      {#each (skill.tags || []) as tag}
                         <span style="font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--panel-2); color: var(--muted);">
                           #{tag}
                         </span>
@@ -1521,6 +1582,14 @@
                 </div>
               {/each}
             </div>
+
+            {#if skillSource === 'github' && githubResults.length < githubTotal && !githubLoading}
+              <div style="text-align: center; padding: 16px;">
+                <button class="primary" onclick={() => searchGitHubSkills(githubQuery, githubPage + 1)}>
+                  Load More ({githubResults.length} / {githubTotal.toLocaleString()})
+                </button>
+              </div>
+            {/if}
           </div>
 
         <!-- VIEW 11: MEDIA PROVIDERS -->

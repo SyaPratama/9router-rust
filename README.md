@@ -59,11 +59,13 @@ View active models, copy upstream IDs, and execute live capability probes direct
   <img src="./images/models-view.png" alt="Provider Models View" width="700"/>
 </div>
 
-### 4. Injected Agent Skills Catalog
-Browse, search, and install curated agent skills sourced from the global [`agent-skills`](https://github.com/topics/agent-skills) ecosystem.
+### 4. Injected Agent Skills Catalog & Live GitHub Search
+Browse, search, and install curated agent skills or search live through 37,000+ open-source skills via `/api/skills/search?q=` indexed from [`agent-skills`](https://github.com/topics/agent-skills).
 
 <div align="center">
-  <img src="./images/agent-skills.png" alt="Agent Skills Catalog" width="850"/>
+  <img src="./images/agent-skills.png" alt="Curated Agent Skills Catalog" width="850"/>
+  <br/><br/>
+  <img src="./images/agent-skills-github.png" alt="Live GitHub Skills Search" width="850"/>
 </div>
 
 ---
