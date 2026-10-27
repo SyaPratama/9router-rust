@@ -786,6 +786,17 @@ input:focus, select:focus, textarea:focus {
   gap: 12px;
 }
 
+.oauth-auth-box-btn {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+.oauth-auth-box-btn:hover {
+  background: #27272e;
+  border-color: #3f3f46;
+}
+
 .oauth-spinner {
   width: 18px;
   height: 18px;
@@ -940,6 +951,46 @@ input:focus, select:focus, textarea:focus {
 .oauth-btn-cancel:hover {
   background: rgba(255, 255, 255, 0.05);
   color: #ffffff;
+}
+
+/* MODEL ROW ITEM (PARITY WITH IMAGE #2) */
+.model-row-item {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.model-row-item:hover {
+  border-color: var(--border-light);
+}
+
+.model-id-pill code {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+
+.test-model-btn {
+  background: var(--panel-2);
+  border: 1px solid var(--border-light);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 5px 12px;
+  border-radius: 6px;
+}
+.test-model-btn:hover {
+  background: var(--panel-hover);
+  border-color: var(--border-focus);
 }
 
 /* RESPONSIVE */

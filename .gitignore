@@ -2,6 +2,10 @@
 /target/
 *.rs.bk
 
+# Frontend node_modules
+node_modules/
+dist/
+
 # Environment
 .env*
 !.env.example
