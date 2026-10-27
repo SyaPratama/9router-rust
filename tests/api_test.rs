@@ -255,3 +255,233 @@ async fn test_api_key_enforcement() {
     let resp = app.oneshot(req_valid).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+#[tokio::test]
+async fn test_slice1_media_and_skills_endpoints() {
+    let pool = init_memory_pool().expect("DB pool");
+    let conn = pool.get().expect("conn");
+    migrate(&conn).expect("migrate");
+    drop(conn);
+
+    let engine = Arc::new(RoutingEngine::new(pool));
+    let app = build_router(engine);
+
+    // 1. GET /v1/models/image
+    let req = Request::builder()
+        .uri("/v1/models/image")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["object"], "list");
+    assert!(val["data"].as_array().unwrap().iter().any(|m| m["id"] == "openai/dall-e-3"));
+
+    // 2. GET /v1/models/info?id=openai/dall-e-3
+    let req = Request::builder()
+        .uri("/v1/models/info?id=openai/dall-e-3")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["kind"], "image");
+
+    // 3. POST /v1/embeddings
+    let req = Request::builder()
+        .uri("/v1/embeddings")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "model": "openai/text-embedding-3-small",
+            "input": ["hello world", "rust ai gateway"]
+        }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["object"], "list");
+    assert_eq!(val["data"].as_array().unwrap().len(), 2);
+
+    // 4. POST /v1/images/generations
+    let req = Request::builder()
+        .uri("/v1/images/generations")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "model": "openai/dall-e-3",
+            "prompt": "sunset over mountains"
+        }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(val["data"].as_array().unwrap().len() >= 1);
+
+    // 5. POST /v1/audio/speech
+    let req = Request::builder()
+        .uri("/v1/audio/speech")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "model": "openai/tts-1",
+            "input": "Hello from 9Router"
+        }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 6. GET /v1/audio/voices
+    let req = Request::builder()
+        .uri("/v1/audio/voices")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 7. POST /v1/videos/generations & GET status
+    let req = Request::builder()
+        .uri("/v1/videos/generations")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "prompt": "flying eagle over ocean"
+        }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    let req_id = val["request_id"].as_str().unwrap();
+
+    let req_poll = Request::builder()
+        .uri(format!("/v1/videos/{}", req_id))
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp_poll = app.clone().oneshot(req_poll).await.unwrap();
+    assert_eq!(resp_poll.status(), StatusCode::OK);
+
+    // 8. POST /v1/search
+    let req = Request::builder()
+        .uri("/v1/search")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "model": "tavily",
+            "query": "rust ai gateway"
+        }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["provider"], "tavily");
+    assert!(!val["results"].as_array().unwrap().is_empty());
+
+    // 9. POST /v1/web/fetch
+    let req = Request::builder()
+        .uri("/v1/web/fetch")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "model": "jina-reader",
+            "url": "https://example.com"
+        }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["provider"], "jina-reader");
+    let text = val["content"]["text"].as_str().unwrap();
+    assert!(text.len() > 10, "web/fetch should return non-trivial content");
+}
+
+#[tokio::test]
+async fn test_slice2_admin_and_proxy_endpoints() {
+    let pool = init_memory_pool().expect("DB pool");
+    let conn = pool.get().expect("conn");
+    migrate(&conn).expect("migrate");
+    drop(conn);
+
+    let engine = Arc::new(RoutingEngine::new(pool));
+    let app = build_router(engine);
+
+    // 1. GET /api/version
+    let req = Request::builder()
+        .uri("/api/version")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["version"], "1.0.1");
+
+    // 2. GET /api/quota
+    let req = Request::builder()
+        .uri("/api/quota")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(val["data"].as_array().unwrap().len() >= 1);
+
+    // 3. POST /api/proxy-pools and GET /api/proxy-pools
+    let req = Request::builder()
+        .uri("/api/proxy-pools")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "id": "proxy-test-1",
+            "isActive": true,
+            "testStatus": "online",
+            "data": { "name": "Test Proxy", "url": "http://127.0.0.1:8080" }
+        }).to_string()))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let req = Request::builder()
+        .uri("/api/proxy-pools")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val.as_array().unwrap().len(), 1);
+
+    // 4. POST /api/translator/run
+    let req = Request::builder()
+        .uri("/api/translator/run")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "source_format": "openai",
+            "target_format": "claude",
+            "payload": {
+                "model": "openai/gpt-4o",
+                "messages": [{ "role": "user", "content": "hi" }]
+            }
+        }).to_string()))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["target_format"], "claude");
+    assert_eq!(val["valid"], true);
+}

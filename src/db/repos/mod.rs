@@ -3,3 +3,4 @@ pub mod connections;
 pub mod combos;
 pub mod keys;
 pub mod usage;
+pub mod proxy_pools;
