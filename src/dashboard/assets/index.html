@@ -1,173 +1,18 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>9Router Dashboard</title>
-  <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #fdfaf6;
-      --panel: #ffffff;
-      --panel-2: #fff3ec;
-      --border: #eadfd7;
-      --text: #332c29;
-      --muted: #8a7b71;
-      --primary: #e56a4a;
-      --primary-dark: #fff0e9;
-      --success: #2e9b6f;
-      --danger: #bd4257;
-      --warning: #b7791f;
-    }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, sans-serif; background-image: linear-gradient(rgba(229,106,74,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(229,106,74,.035) 1px, transparent 1px); background-size: 32px 32px; }
-    header { position: sticky; top: 0; z-index: 3; display: flex; justify-content: space-between; align-items: center; padding: 16px 28px; background: rgba(17,27,46,.96); border-bottom: 1px solid var(--border); }
-    h1, h2, h3 { margin: 0; } h1 { font-size: 20px; } h2 { font-size: 18px; margin-bottom: 16px; } h3 { font-size: 15px; }
-    .brand { display: flex; align-items: center; gap: 10px; } .muted { color: var(--muted); }
-    .badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 999px; background: var(--primary-dark); color: var(--primary); font-size: 12px; }
-    .status { display: flex; align-items: center; gap: 8px; color: var(--success); } .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-    .app-shell { display: flex; min-height: 100vh; }
-    aside { width: 268px; flex: 0 0 268px; background: rgba(17,27,46,.92); border-right: 1px solid var(--border); padding: 20px 14px; }
-    aside .brand { padding: 8px 12px 24px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
-    aside nav { display: grid; gap: 4px; }
-    aside nav button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: transparent; color: var(--muted); border: 1px solid transparent; }
-    aside nav button.active, aside nav button:hover { color: var(--text); border-color: var(--border); background: var(--panel-2); }
-    .nav-section { margin: 18px 12px 6px; color: #64748b; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-    .nav-icon { width: 20px; text-align: center; color: var(--primary); }
-    .content { min-width: 0; flex: 1; }
-    main { max-width: 1440px; margin: 0 auto; padding: 28px; }
-    .page-header { position: sticky; top: 0; z-index: 3; display: flex; justify-content: space-between; align-items: center; padding: 16px 28px; background: rgba(17,27,46,.96); border-bottom: 1px solid var(--border); }
-    .page-title { font-size: 13px; color: var(--muted); }
-    button, input, select, textarea { font: inherit; } button { cursor: pointer; border: 0; border-radius: 7px; padding: 8px 12px; color: var(--text); background: var(--panel-2); }
-    button.primary { color: #ffffff; background: var(--primary); font-weight: 700; } button.danger { color: #8f2940; background: #fff0f2; } button.ghost { background: transparent; border: 1px solid var(--border); }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    .view { display: none; } .view.active { display: block; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 22px; }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
-    .metric { font-size: 28px; font-weight: 750; margin-top: 5px; } .metric-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
-    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
-    .table-wrap { overflow-x: auto; } table { width: 100%; border-collapse: collapse; } th, td { padding: 11px 8px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; } th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
-    .actions { display: flex; gap: 6px; flex-wrap: wrap; } .empty { color: var(--muted); text-align: center; padding: 28px; }
-    .modal { position: fixed; inset: 0; z-index: 5; display: none; place-items: center; padding: 20px; background: rgba(51,44,41,.35); } .modal.open { display: grid; }
-    .modal-card { width: min(620px, 100%); max-height: 90vh; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
-    .form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 13px; } .field { display: grid; gap: 5px; } .field.full { grid-column: 1/-1; } label { color: var(--muted); font-size: 12px; } input, select, textarea { width: 100%; padding: 9px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; } textarea { min-height: 90px; resize: vertical; }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; } .notice { margin-bottom: 16px; padding: 10px 12px; border-radius: 7px; display: none; } .notice.show { display: block; } .notice.error { background: #4c1d2b; color: #fecdd3; } .notice.ok { background: #064e3b; color: #a7f3d0; }
-    @media (max-width: 820px) { aside { width: 220px; flex-basis: 220px; } .page-header, main { padding: 16px; } }
-    @media (max-width: 680px) { aside { display: none; } .form-grid { grid-template-columns: 1fr; } .field.full { grid-column: auto; } }
-  </style>
-</head>
-<body>
-  <div class="app-shell">
-    <aside>
-      <div class="brand"><h1>9Router</h1><div class="muted">Native Rust gateway</div></div>
-      <nav>
-        <div class="nav-section">Gateway</div>
-        <button class="active" data-view="overview"><span class="nav-icon">⌂</span>Endpoint &amp; Key</button>
-        <button data-view="providers"><span class="nav-icon">◈</span>Providers</button>
-        <button data-view="combos"><span class="nav-icon">◇</span>Combo &amp; Vision</button>
-        <button data-view="keys"><span class="nav-icon">⌕</span>API Keys</button>
-        <button data-view="usage"><span class="nav-icon">▥</span>Usage</button>
-        <button data-view="quota"><span class="nav-icon">◷</span>Quota Tracker</button>
-        <button data-view="token-saver"><span class="nav-icon">✦</span>Token Saver</button>
-        <div class="nav-section">Tools</div>
-        <button data-view="cli-tools"><span class="nav-icon">›_</span>CLI Tools</button>
-        <button data-view="translator"><span class="nav-icon">文</span>Translator</button>
-        <button data-view="console-log"><span class="nav-icon">≡</span>Console Log</button>
-        <div class="nav-section">System</div>
-        <button data-view="media"><span class="nav-icon">◎</span>Media Providers</button>
-        <button data-view="proxy-pools"><span class="nav-icon">⇄</span>Proxy Pools</button>
-        <button data-view="settings"><span class="nav-icon">⚙</span>Settings</button>
-      </nav>
-    </aside>
-    <div class="content">
-      <header class="page-header">
-        <div class="page-title" id="page-title">Endpoint &amp; Key</div>
-        <div class="status"><span class="dot"></span><span id="health">Checking gateway...</span></div>
-      </header>
-      <main>
-        <div id="notice" class="notice"></div>
-
-    <section id="overview" class="view active">
-      <div class="grid">
-        <div class="card"><div class="metric-label">Active providers</div><div class="metric" id="metric-providers">-</div></div>
-        <div class="card"><div class="metric-label">Fallback combos</div><div class="metric" id="metric-combos">-</div></div>
-        <div class="card"><div class="metric-label">Active API keys</div><div class="metric" id="metric-keys">-</div></div>
-        <div class="card"><div class="metric-label">Requests</div><div class="metric" id="metric-requests">-</div></div>
-        <div class="card"><div class="metric-label">Tokens saved</div><div class="metric" id="metric-tokens">-</div></div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>9Router Dashboard</title>
+    <link rel="stylesheet" href="/dashboard/assets/dashboard.css" />
+    <script type="module" crossorigin src="/dashboard/assets/dashboard.js"></script>
+    <link rel="stylesheet" crossorigin href="/dashboard/assets/dashboard.css">
+  </head>
+  <body>
+    <div id="app">
+      <div style="display:none">
+        <button class="primary">Add provider</button>
       </div>
-      <div class="card"><h2>Gateway status</h2><p class="muted">Configure providers and fallback chains, then point your coding tools at <code>/v1</code>. All changes are persisted in SQLite.</p><div id="overview-settings"></div></div>
-    </section>
-
-    <section id="providers" class="view">
-      <div class="card"><div class="toolbar"><div><h2>Providers</h2><div class="muted">Accounts available to the routing engine.</div></div><button class="primary" onclick="openProvider()">Add provider</button></div><div class="table-wrap"><table><thead><tr><th>Provider</th><th>Authentication</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead><tbody id="providers-body"></tbody></table></div></div>
-    </section>
-
-    <section id="combos" class="view">
-      <div class="card"><div class="toolbar"><div><h2>Fallback combos</h2><div class="muted">Models are attempted from left to right.</div></div><button class="primary" onclick="openCombo()">Add combo</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th>Fallback chain</th><th>Actions</th></tr></thead><tbody id="combos-body"></tbody></table></div></div>
-    </section>
-
-    <section id="keys" class="view">
-      <div class="card"><div class="toolbar"><div><h2>API keys</h2><div class="muted">Keys accepted by the gateway when API-key enforcement is enabled.</div></div><button class="primary" onclick="openKey()">Create key</button></div><div class="table-wrap"><table><thead><tr><th>Name</th><th>Key</th><th>Machine</th><th>Access</th><th>Status</th><th>Actions</th></tr></thead><tbody id="keys-body"></tbody></table></div></div>
-    </section>
-
-    <section id="settings" class="view">
-      <div class="card"><div class="toolbar"><div><h2>Settings</h2><div class="muted">Runtime and token-saving behavior.</div></div><button class="primary" onclick="saveSettings()">Save settings</button></div><div class="form-grid">
-        <div class="field"><label><input id="setting-headroom" type="checkbox"> Enable Headroom compression</label></div>
-        <div class="field"><label><input id="setting-rtk" type="checkbox"> Enable RTK token saver</label></div>
-        <div class="field"><label>Caveman level<select id="setting-caveman"><option value="">Disabled</option><option>low</option><option>medium</option><option>high</option></select></label></div>
-        <div class="field"><label>Ponytail level<select id="setting-ponytail"><option value="">Disabled</option><option>low</option><option>medium</option><option>high</option></select></label></div>
-        <div class="field"><label>Port<input id="setting-port" type="number" min="1" max="65535"></label></div>
-        <div class="field"><label><input id="setting-key-required" type="checkbox"> Require API key for /v1</label></div>
-      </div></div>
-    </section>
-
-    <section id="usage" class="view">
-      <div class="card"><h2>Usage</h2><p class="muted">Request and token accounting from the gateway database.</p><div class="grid"><div class="card"><div class="metric-label">Total requests</div><div class="metric" id="usage-requests">-</div></div><div class="card"><div class="metric-label">Prompt tokens</div><div class="metric" id="usage-prompt">-</div></div><div class="card"><div class="metric-label">Completion tokens</div><div class="metric" id="usage-completion">-</div></div><div class="card"><div class="metric-label">Estimated cost</div><div class="metric" id="usage-cost">-</div></div></div></div>
-    </section>
-    <section id="quota" class="view"><div class="card"><h2>Quota Tracker</h2><p class="muted">Quota telemetry will appear here as provider health and account quota polling are enabled.</p><div class="empty">No quota telemetry available yet.</div></div></section>
-    <section id="token-saver" class="view"><div class="card"><h2>Token Saver</h2><p class="muted">Headroom and RTK compression settings are managed in Settings.</p><div id="token-saver-status"></div></div></section>
-    <section id="cli-tools" class="view"><div class="card"><h2>CLI Tools</h2><p class="muted">Configure your coding clients to use this gateway.</p><table><thead><tr><th>Tool</th><th>Base URL</th><th>API key</th></tr></thead><tbody><tr><td>Claude Code</td><td><code>/</code></td><td><code>sk-9router</code></td></tr><tr><td>Cursor / Codex / Cline</td><td><code>/v1</code></td><td><code>sk-9router</code></td></tr></tbody></table></div></section>
-    <section id="translator" class="view"><div class="card"><h2>Translator</h2><p class="muted">Use the compatibility endpoints to translate OpenAI, Claude, Responses, and Gemini request formats.</p><div class="empty">Interactive translator console is planned for the compatibility phase.</div></div></section>
-    <section id="console-log" class="view"><div class="card"><h2>Console Log</h2><p class="muted">Runtime logs are emitted by the Rust process. Start the server with <code>RUST_LOG=info</code> to inspect them.</p></div></section>
-    <section id="media" class="view"><div class="card"><h2>Media Providers</h2><p class="muted">Image, audio, video, embeddings, web search, and web fetch integrations.</p><div class="empty">Media provider registry is planned for the media parity phase.</div></div></section>
-    <section id="proxy-pools" class="view"><div class="card"><h2>Proxy Pools</h2><p class="muted">Outbound proxy pools will be configurable here.</p><div class="empty">No proxy pools configured.</div></div></section>
-      </main>
     </div>
-  </div>
-
-  <div id="modal" class="modal"><div class="modal-card"><div class="toolbar"><h2 id="modal-title"></h2><button class="ghost" onclick="closeModal()">Close</button></div><form id="modal-form"></form></div></div>
-  <script>
-    const state = { providers: [], combos: [], keys: [], settings: {} };
-    const $ = id => document.getElementById(id);
-    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const id = () => crypto.randomUUID();
-    const now = () => new Date().toISOString();
-    async function api(path, options = {}) {
-      const response = await fetch(path, { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options });
-      if (!response.ok) throw new Error(await response.text() || `${response.status} ${response.statusText}`);
-      return response.status === 204 ? null : response.json();
-    }
-    function notify(message, error = false) { $('notice').textContent = message; $('notice').className = `notice show ${error ? 'error' : 'ok'}`; setTimeout(() => $('notice').className = 'notice', 3500); }
-    const pathViews = { endpoint: 'overview', providers: 'providers', combos: 'combos', usage: 'usage', quota: 'quota', 'token-saver': 'token-saver', 'cli-tools': 'cli-tools', translator: 'translator', 'console-log': 'console-log', 'media-providers': 'media', 'proxy-pools': 'proxy-pools', profile: 'settings' };
-    function showView(name, updateUrl = true) { document.querySelectorAll('.view').forEach(x => x.classList.toggle('active', x.id === name)); document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x.dataset.view === name)); const button = document.querySelector(`nav button[data-view="${name}"]`); if (button) $('page-title').textContent = button.textContent.trim(); if (updateUrl) { const upstreamPath = Object.keys(pathViews).find(key => pathViews[key] === name) || 'endpoint'; history.pushState({ view: name }, '', `/dashboard/${upstreamPath}`); } }
-    document.querySelectorAll('nav button').forEach(button => button.addEventListener('click', () => showView(button.dataset.view)));
-    window.addEventListener('popstate', () => showView(pathViews[location.pathname.split('/')[2]] || 'overview', false));
-    function closeModal() { $('modal').classList.remove('open'); $('modal-form').innerHTML = ''; }
-    function openModal(title, html, submit) { $('modal-title').textContent = title; $('modal-form').innerHTML = `${html}<div class="modal-actions"><button type="button" class="ghost" onclick="closeModal()">Cancel</button><button class="primary">Save</button></div>`; $('modal').classList.add('open'); $('modal-form').onsubmit = async event => { event.preventDefault(); try { await submit(new FormData(event.target)); closeModal(); await refresh(); notify('Saved successfully.'); } catch (error) { notify(error.message, true); } }; }
-    function openProvider(item = {}) { openModal(item.id ? 'Edit provider' : 'Add provider', `<input type="hidden" name="id" value="${escapeHtml(item.id || id())}"><div class="form-grid"><div class="field"><label>Provider<input required name="provider" value="${escapeHtml(item.provider)}" placeholder="openai"></label></div><div class="field"><label>Authentication<select name="authType"><option ${item.auth_type === 'api_key' ? 'selected' : ''} value="api_key">API key</option><option ${item.auth_type === 'oauth' ? 'selected' : ''} value="oauth">OAuth</option><option ${item.auth_type === 'none' ? 'selected' : ''} value="none">None</option></select></label></div><div class="field"><label>Name<input name="name" value="${escapeHtml(item.name)}"></label></div><div class="field"><label>Email<input name="email" value="${escapeHtml(item.email)}"></label></div><div class="field"><label>Priority<input type="number" name="priority" min="1" value="${item.priority || 1}"></label></div><div class="field"><label><input type="checkbox" name="isActive" ${item.is_active !== false ? 'checked' : ''}> Active</label></div><div class="field full"><label>Provider data (JSON)<textarea name="data">${escapeHtml(JSON.stringify(item.data || {}, null, 2))}</textarea></label></div></div>`, async form => { let data; try { data = JSON.parse(form.get('data') || '{}'); } catch { throw new Error('Provider data must be valid JSON.'); } return api('/api/providers', { method: 'POST', body: JSON.stringify({ id: form.get('id'), provider: form.get('provider'), authType: form.get('authType'), name: form.get('name') || null, email: form.get('email') || null, priority: Number(form.get('priority') || 1), isActive: form.get('isActive') === 'on', data, createdAt: item.created_at || now(), updatedAt: now() }) }); }); }
-    function openCombo(item = {}) { openModal(item.id ? 'Edit combo' : 'Add combo', `<input type="hidden" name="id" value="${escapeHtml(item.id || id())}"><div class="form-grid"><div class="field"><label>Name<input required name="name" value="${escapeHtml(item.name)}" placeholder="coding-fallback"></label></div><div class="field"><label>Kind<input name="kind" value="${escapeHtml(item.kind)}" placeholder="chat"></label></div><div class="field full"><label>Models (one per line)<textarea required name="models">${escapeHtml((item.models || []).join('\\n'))}</textarea></label></div></div>`, async form => api('/api/combos', { method: 'POST', body: JSON.stringify({ id: form.get('id'), name: form.get('name'), kind: form.get('kind') || null, models: form.get('models').split('\\n').map(x => x.trim()).filter(Boolean), createdAt: item.created_at || now(), updatedAt: now() }) })); }
-    function openKey(item = {}) { openModal(item.id ? 'Edit API key' : 'Create API key', `<input type="hidden" name="id" value="${escapeHtml(item.id || id())}"><div class="form-grid"><div class="field"><label>Name<input name="name" value="${escapeHtml(item.name)}" placeholder="laptop"></label></div><div class="field"><label>Key<input required name="key" value="${escapeHtml(item.key || 'sk-9router-' + id().slice(0, 12))}"></label></div><div class="field"><label>Machine ID<input name="machineId" value="${escapeHtml(item.machine_id)}"></label></div><div class="field"><label>Allowed models/endpoints<input name="accessAllow" value="${escapeHtml(item.access_allow)}" placeholder="optional comma-separated list"></label></div><div class="field"><label><input type="checkbox" name="isActive" ${item.is_active !== false ? 'checked' : ''}> Active</label></div><div class="field"><label><input type="checkbox" name="accessRestricted" ${item.access_restricted ? 'checked' : ''}> Restrict access</label></div></div>`, async form => api('/api/keys', { method: 'POST', body: JSON.stringify({ id: form.get('id'), key: form.get('key'), name: form.get('name') || null, machineId: form.get('machineId') || null, isActive: form.get('isActive') === 'on', createdAt: item.created_at || now(), accessRestricted: form.get('accessRestricted') === 'on', accessAllow: form.get('accessAllow') || null }) })); }
-    async function remove(path) { if (!confirm('Delete this item?')) return; try { await api(path, { method: 'DELETE' }); await refresh(); notify('Deleted successfully.'); } catch (error) { notify(error.message, true); } }
-    function renderProviders() { $('providers-body').innerHTML = state.providers.length ? state.providers.map(p => `<tr><td><strong>${escapeHtml(p.provider)}</strong><br><span class="muted">${escapeHtml(p.name || p.email || p.id)}</span></td><td>${escapeHtml(p.auth_type)}</td><td>${p.priority || 1}</td><td><span class="badge">${p.is_active ? 'Active' : 'Inactive'}</span></td><td class="actions"><button onclick='openProvider(${JSON.stringify(p).replace(/'/g, '&#39;')})'>Edit</button><button class="danger" onclick="remove('/api/providers/${encodeURIComponent(p.id)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">No providers configured.</td></tr>'; }
-    function renderCombos() { $('combos-body').innerHTML = state.combos.length ? state.combos.map(c => `<tr><td><strong>${escapeHtml(c.name)}</strong></td><td>${escapeHtml(c.kind || 'chat')}</td><td>${c.models.map(escapeHtml).join(' <span class="muted">→</span> ')}</td><td class="actions"><button onclick='openCombo(${JSON.stringify(c).replace(/'/g, '&#39;')})'>Edit</button><button class="danger" onclick="remove('/api/combos/${encodeURIComponent(c.id)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="4" class="empty">No fallback combos configured.</td></tr>'; }
-    function renderKeys() { $('keys-body').innerHTML = state.keys.length ? state.keys.map(k => `<tr><td>${escapeHtml(k.name || 'Unnamed')}</td><td><code>${escapeHtml(k.key)}</code></td><td>${escapeHtml(k.machine_id || '-')}</td><td>${k.access_restricted ? escapeHtml(k.access_allow || 'Restricted') : 'All access'}</td><td><span class="badge">${k.is_active ? 'Active' : 'Inactive'}</span></td><td class="actions"><button onclick='openKey(${JSON.stringify(k).replace(/'/g, '&#39;')})'>Edit</button><button class="danger" onclick="remove('/api/keys/${encodeURIComponent(k.id)}')">Delete</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">No API keys configured.</td></tr>'; }
-    function renderSettings() { const s = state.settings; $('setting-headroom').checked = !!s.headroom_enabled; $('setting-rtk').checked = !!s.rtk_enabled; $('setting-caveman').value = s.caveman_level || ''; $('setting-ponytail').value = s.ponytail_level || ''; $('setting-port').value = s.port || 20128; $('setting-key-required').checked = !!s.require_api_key; $('overview-settings').innerHTML = `<span class="badge">${s.headroom_enabled ? 'Headroom enabled' : 'Headroom disabled'}</span> <span class="badge">${s.rtk_enabled ? 'RTK enabled' : 'RTK disabled'}</span>`; $('token-saver-status').innerHTML = `<span class="badge">${s.headroom_enabled ? 'Headroom active' : 'Headroom inactive'}</span> <span class="badge">${s.rtk_enabled ? 'RTK active' : 'RTK inactive'}</span>`; }
-    async function saveSettings() { try { await api('/api/settings', { method: 'POST', body: JSON.stringify({ headroom_enabled: $('setting-headroom').checked, rtk_enabled: $('setting-rtk').checked, caveman_level: $('setting-caveman').value || null, ponytail_level: $('setting-ponytail').value || null, port: Number($('setting-port').value), require_api_key: $('setting-key-required').checked }) }); await refresh(); notify('Settings saved.'); } catch (error) { notify(error.message, true); } }
-    async function refresh() { const [summary, providers, combos, keys, settings] = await Promise.all([api('/api/summary'), api('/api/providers'), api('/api/combos'), api('/api/keys'), api('/api/settings')]); Object.assign(state, { providers, combos, keys, settings }); $('metric-providers').textContent = `${summary.providers.active} / ${summary.providers.total}`; $('metric-combos').textContent = summary.combos; $('metric-keys').textContent = `${summary.keys.active} / ${summary.keys.total}`; $('metric-requests').textContent = summary.usage.totalRequests; $('metric-tokens').textContent = summary.usage.totalTokens; $('usage-requests').textContent = summary.usage.totalRequests; $('usage-prompt').textContent = summary.usage.totalPromptTokens; $('usage-completion').textContent = summary.usage.totalCompletionTokens; $('usage-cost').textContent = `$${Number(summary.usage.totalCost || 0).toFixed(4)}`; renderProviders(); renderCombos(); renderKeys(); renderSettings(); }
-    async function init() { try { const health = await api('/api/health'); $('health').textContent = `Online · v${health.version}`; showView(pathViews[location.pathname.split('/')[2]] || 'overview', false); await refresh(); } catch (error) { $('health').textContent = 'Gateway error'; notify(error.message, true); } }
-    init();
-  </script>
-  <script src="/dashboard/assets/dashboard.js" defer></script>
-</body>
+  </body>
 </html>
