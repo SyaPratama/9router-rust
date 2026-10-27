@@ -11,7 +11,8 @@ use crate::db::repos::keys::{ApiKeyItem, ApiKeysRepo};
 use crate::db::repos::settings::{SettingsRepo, SystemSettings};
 use crate::db::repos::usage::UsageRepo;
 
-static CATALOG_JSON: &str = include_str!("../../dashboard/assets/provider-registry.json");
+static CATALOG_JSON: &str = include_str!("../../web/assets/provider-registry.json");
+static SKILLS_JSON: &str = include_str!("../../web/assets/agent-skills.json");
 
 pub async fn get_health() -> impl IntoResponse {
     Json(json!({
@@ -80,6 +81,96 @@ pub async fn get_provider_catalog() -> impl IntoResponse {
         [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
         CATALOG_JSON,
     )
+}
+
+pub async fn get_skills_catalog() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+        SKILLS_JSON,
+    )
+}
+
+#[derive(Deserialize)]
+pub struct SkillsSearchQuery {
+    pub q: Option<String>,
+    pub page: Option<u32>,
+    pub per_page: Option<u32>,
+}
+
+pub async fn search_github_skills(
+    Query(params): Query<SkillsSearchQuery>,
+) -> impl IntoResponse {
+    let query = params.q.unwrap_or_default();
+    let page = params.page.unwrap_or(1).max(1);
+    let per_page = params.per_page.unwrap_or(30).min(100);
+
+    let search_q = if query.is_empty() {
+        "topic:agent-skills".to_string()
+    } else {
+        format!("{} topic:agent-skills", query)
+    };
+
+    let url = format!(
+        "https://api.github.com/search/repositories?q={}&sort=stars&order=desc&page={}&per_page={}",
+        urlencoding::encode(&search_q), page, per_page
+    );
+
+    let client = reqwest::Client::new();
+    let res = client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "9router-rust")
+        .send()
+        .await;
+
+    match res {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            if status.is_success() {
+                let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or(json!({}));
+                let total = parsed["total_count"].as_u64().unwrap_or(0);
+                let items = parsed["items"].as_array().cloned().unwrap_or_default();
+
+                let skills: Vec<serde_json::Value> = items.iter().map(|item| {
+                    let full_name = item["full_name"].as_str().unwrap_or("");
+                    let topics = item["topics"].as_array()
+                        .map(|t| t.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    json!({
+                        "id": item["name"],
+                        "name": item["name"],
+                        "author": item["owner"]["login"],
+                        "repo": full_name,
+                        "url": item["html_url"],
+                        "stars": item["stargazers_count"],
+                        "category": if topics.is_empty() { "Agent Skills".to_string() } else { topics[0].clone() },
+                        "description": item["description"],
+                        "installCommand": format!("npx skills add {}", full_name),
+                        "tags": topics,
+                        "language": item["language"],
+                        "updated_at": item["updated_at"],
+                    })
+                }).collect();
+
+                Json(json!({
+                    "total_count": total,
+                    "page": page,
+                    "per_page": per_page,
+                    "items": skills,
+                })).into_response()
+            } else {
+                (StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
+                 Json(json!({ "error": "GitHub API error", "status": status.as_u16(), "body": body }))
+                ).into_response()
+            }
+        }
+        Err(e) => {
+            (StatusCode::BAD_GATEWAY,
+             Json(json!({ "error": format!("Failed to reach GitHub: {}", e) }))
+            ).into_response()
+        }
+    }
 }
 
 pub async fn list_providers(

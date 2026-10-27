@@ -1,6 +1,6 @@
 [package]
 name = "router9"
-version = "1.0.1"
+version = "0.0.21"
 edition = "2021"
 description = "Native Rust AI Gateway with built-in Headroom Context Compression"
 license = "MIT OR Apache-2.0"
@@ -38,6 +38,7 @@ clap = { version = "4.5", features = ["derive"] }
 rust-embed = "8.5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.12", features = ["v4", "fast-rng"] }
+urlencoding = "2"
 
 [dev-dependencies]
 tempfile = "3.16"

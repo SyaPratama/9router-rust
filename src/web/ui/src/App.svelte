@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import providerRegistry from './lib/provider-registry.json';
+  import agentSkillsList from './lib/agent-skills.json';
 
   // -------------------------------------------------------------
   // Application State
@@ -13,7 +14,7 @@
   let activeView = $state('providers'); // 'providers' | 'provider-detail' | 'endpoint' | 'combos' | 'usage' | 'quota' | 'token-saver' | 'cli-tools' | 'translator' | 'skills' | 'media' | 'proxy-pools' | 'console-log' | 'settings'
   let selectedProviderId = $state('antigravity');
   let theme = $state('dark');
-  let version = $state('v0.5.111 (Rust)');
+  let version = $state('v0.0.21 (Rust)');
   let mediaOpen = $state(false);
 
   // Data collections
@@ -47,6 +48,56 @@
   // Search & Filters for Providers
   let providerSearch = $state('');
   let providerStatusFilter = $state('all'); // 'all' | 'active' | 'inactive' | 'no-connection'
+
+  // Search & Filters for Skills
+  let skillSearch = $state('');
+  let skillCategory = $state('all');
+  let skillSource = $state('curated'); // 'curated' | 'github'
+  let githubResults = $state([]);
+  let githubTotal = $state(0);
+  let githubPage = $state(1);
+  let githubLoading = $state(false);
+  let githubQuery = $state('');
+
+  let skillCategories = $derived.by(() => {
+    const list = skillSource === 'curated' ? agentSkillsList : githubResults;
+    const cats = new Set(list.map(s => s.category));
+    return ['all', ...Array.from(cats)];
+  });
+
+  let filteredSkills = $derived.by(() => {
+    const q = skillSearch.toLowerCase().trim();
+    const list = skillSource === 'curated' ? agentSkillsList : githubResults;
+    return list.filter(s => {
+      const matchCat = skillCategory === 'all' || s.category === skillCategory;
+      const matchSearch = !q ||
+        s.name.toLowerCase().includes(q) ||
+        (s.author && s.author.toLowerCase().includes(q)) ||
+        (s.description && s.description.toLowerCase().includes(q)) ||
+        (s.tags && s.tags.some(t => t.toLowerCase().includes(q)));
+      return matchCat && matchSearch;
+    });
+  });
+
+  async function searchGitHubSkills(query, page = 1) {
+    githubLoading = true;
+    try {
+      const params = new URLSearchParams({ page: String(page), per_page: '30' });
+      if (query) params.set('q', query);
+      const resp = await fetch(`/api/skills/search?${params}`);
+      const data = await resp.json();
+      if (data.items) {
+        githubResults = page === 1 ? data.items : [...githubResults, ...data.items];
+        githubTotal = data.total_count || 0;
+        githubPage = page;
+        githubQuery = query;
+      }
+    } catch (e) {
+      console.error('GitHub skills search failed:', e);
+    } finally {
+      githubLoading = false;
+    }
+  }
 
   // Modals & Popups
   let modalType = $state(null); // 'custom-provider' | 'add-connection' | 'add-model' | 'create-combo' | 'create-key' | 'add-proxy'
@@ -1421,27 +1472,124 @@
             </div>
           </div>
 
-        <!-- VIEW 10: SKILLS -->
+        <!-- VIEW 10: SKILLS (INJECTED FROM HTTPS://GITHUB.COM/TOPICS/AGENT-SKILLS) -->
         {:else if activeView === 'skills'}
-          <div class="grid">
-            {#each [
-              { name: 'Chat Completion', desc: 'OpenAI and Claude compatible streaming chat API', kind: 'chat' },
-              { name: 'Image Generation', desc: 'DALL-E, Stable Diffusion, and Flux image synthesis', kind: 'image' },
-              { name: 'Video Generation', desc: 'Runway, Topaz, and Luma video generation adapters', kind: 'video' },
-              { name: 'Text to Speech', desc: 'ElevenLabs, Edge-TTS, and Coqui voice synthesis', kind: 'tts' },
-              { name: 'Speech to Text', desc: 'Whisper and Deepgram transcription pipeline', kind: 'stt' },
-              { name: 'Embeddings', desc: 'Voyage AI, Cohere, and local text embeddings', kind: 'embeddings' },
-              { name: 'Web Search', desc: 'Brave, Serper, and Tavily real-time web search', kind: 'search' },
-              { name: 'Web Fetch', desc: 'Jina Reader and Firecrawl markdown scraper', kind: 'fetch' }
-            ] as skill}
-              <div class="card" style="padding: 16px;">
-                <div style="font-weight: 600; margin-bottom: 4px;">{skill.name}</div>
-                <p class="muted" style="font-size: 12px; margin-bottom: 12px;">{skill.desc}</p>
-                <button class="sm" onclick={() => copyText(`http://localhost:20129/api/v1/${skill.kind}`)}>
-                  <span class="material-symbols-outlined" style="font-size: 16px;">link</span> Copy Endpoint
+          <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <div style="display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">
+                <button class={skillSource === 'curated' ? 'sm primary' : 'sm ghost'} onclick={() => { skillSource = 'curated'; skillCategory = 'all'; }}>
+                  <span class="material-symbols-outlined" style="font-size: 15px;">star</span>
+                  Curated ({agentSkillsList.length})
+                </button>
+                <button class={skillSource === 'github' ? 'sm primary' : 'sm ghost'} onclick={() => { skillSource = 'github'; skillCategory = 'all'; if (!githubResults.length) searchGitHubSkills(''); }}>
+                  <span class="material-symbols-outlined" style="font-size: 15px;">language</span>
+                  GitHub Live ({githubTotal.toLocaleString()})
                 </button>
               </div>
-            {/each}
+
+              {#if skillSource === 'github'}
+                <div class="search-input-wrap" style="flex: 1; min-width: 280px;">
+                  <span class="material-symbols-outlined">search</span>
+                  <input
+                    type="text"
+                    placeholder="Search 15,000+ agent skills on GitHub..."
+                    bind:value={skillSearch}
+                    onkeydown={(e) => { if (e.key === 'Enter') searchGitHubSkills(skillSearch); }}
+                  />
+                </div>
+                <button class="sm primary" onclick={() => searchGitHubSkills(skillSearch)} disabled={githubLoading}>
+                  {githubLoading ? 'Searching...' : 'Search GitHub'}
+                </button>
+              {:else}
+                <div class="search-input-wrap" style="flex: 1; min-width: 280px;">
+                  <span class="material-symbols-outlined">search</span>
+                  <input
+                    type="text"
+                    placeholder="Filter curated agent skills..."
+                    bind:value={skillSearch}
+                  />
+                </div>
+              {/if}
+
+              <div style="width: 240px;">
+                <select bind:value={skillCategory}>
+                  <option value="all">All Categories</option>
+                  {#each skillCategories.filter(c => c !== 'all') as cat}
+                    <option value={cat}>{cat}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+
+            <div class="section-title-bar">
+              <h2>
+                <span class="material-symbols-outlined" style="color:var(--mint);">extension</span>
+                {skillSource === 'curated' ? 'Curated' : 'GitHub Live'} Agent Skills ({filteredSkills.length}{skillSource === 'github' ? ` / ${githubTotal.toLocaleString()}` : ''})
+              </h2>
+              <a href="https://github.com/topics/agent-skills" target="_blank" rel="noopener noreferrer" class="btn ghost sm">
+                <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
+                github.com/topics/agent-skills
+              </a>
+            </div>
+
+            {#if githubLoading}
+              <div style="text-align: center; padding: 40px; color: var(--muted);">
+                <span class="material-symbols-outlined" style="font-size: 32px; animation: spin 1s linear infinite;">progress_activity</span>
+                <p>Searching GitHub repositories...</p>
+              </div>
+            {/if}
+
+            <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
+              {#each filteredSkills as skill (skill.id)}
+                <div class="card" style="padding: 18px; display: flex; flex-direction: column; justify-content: space-between; gap: 12px;">
+                  <div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px;">
+                      <div style="font-weight: 700; font-size: 14px; color: var(--text-strong);">{skill.name}</div>
+                      <span class="badge" style="background: rgba(245, 158, 11, 0.12); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); font-size: 11px; white-space: nowrap;">
+                        ★ {(skill.stars || 0).toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+                      <span class="badge active" style="font-size: 10.5px;">{skill.category}</span>
+                      <a href={skill.url} target="_blank" rel="noopener noreferrer" style="font-size: 11.5px; color: var(--muted); text-decoration: none; display: inline-flex; align-items: center; gap: 3px;">
+                        <span>{skill.repo}</span>
+                        <span class="material-symbols-outlined" style="font-size: 13px;">open_in_new</span>
+                      </a>
+                    </div>
+
+                    <p class="muted" style="font-size: 12.5px; line-height: 1.5; margin-bottom: 12px;">
+                      {skill.description || 'No description available.'}
+                    </p>
+
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px;">
+                      {#each (skill.tags || []) as tag}
+                        <span style="font-size: 10.5px; padding: 1px 6px; border-radius: 4px; background: var(--panel-2); color: var(--muted);">
+                          #{tag}
+                        </span>
+                      {/each}
+                    </div>
+                  </div>
+
+                  <div style="padding-top: 10px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px;">
+                    <div style="flex: 1; background: var(--panel-2); border: 1px solid var(--border-light); border-radius: 4px; padding: 5px 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--mint-bright); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                      {skill.installCommand}
+                    </div>
+                    <button class="sm primary" onclick={() => copyText(skill.installCommand)} title="Copy install command" aria-label="Copy install command">
+                      <span class="material-symbols-outlined" style="font-size: 15px;">content_copy</span>
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+
+            {#if skillSource === 'github' && githubResults.length < githubTotal && !githubLoading}
+              <div style="text-align: center; padding: 16px;">
+                <button class="primary" onclick={() => searchGitHubSkills(githubQuery, githubPage + 1)}>
+                  Load More ({githubResults.length} / {githubTotal.toLocaleString()})
+                </button>
+              </div>
+            {/if}
           </div>
 
         <!-- VIEW 11: MEDIA PROVIDERS -->

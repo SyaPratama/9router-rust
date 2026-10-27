@@ -4,7 +4,7 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "src/dashboard/assets/"]
+#[folder = "src/web/assets/"]
 struct Asset;
 
 pub async fn serve_dashboard() -> impl IntoResponse {
@@ -86,4 +86,19 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
         asset.data.to_vec(),
     )
         .into_response()
+}
+
+pub fn routes() -> axum::Router<crate::api::middleware::AppState> {
+    use axum::routing::get;
+    axum::Router::new()
+        // Dashboard SPA
+        .route("/dashboard", get(serve_dashboard))
+        .route("/dashboard/{*path}", get(serve_dashboard))
+        .route("/dashboard/assets/{*path}", get(serve_asset))
+        // Static pages
+        .route("/landing", get(serve_page))
+        .route("/login", get(serve_page))
+        .route("/callback", get(serve_page))
+        .route("/dashboard/settings/pricing", get(serve_page))
+        .route("/site/assets/{*path}", get(serve_asset))
 }

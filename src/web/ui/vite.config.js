@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [svelte()],
   base: '/dashboard/assets/',
   build: {
-    outDir: path.resolve(import.meta.dirname, '../dashboard/assets'),
+    outDir: path.resolve(import.meta.dirname, '../assets'),
     emptyOutDir: false,
     rollupOptions: {
       input: path.resolve(import.meta.dirname, 'index.html'),
