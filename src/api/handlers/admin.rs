@@ -564,103 +564,374 @@ pub async fn delete_key(
 // Usage & Analytics Handlers
 // -------------------------------------------------------------
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsagePeriodQuery {
+    pub period: Option<String>,
+}
+
+fn selected_usage_period(period: Option<&str>) -> Result<&str, (StatusCode, String)> {
+    let period = period.unwrap_or("all");
+    if ["today", "24h", "7d", "30d", "60d", "all"].contains(&period) {
+        Ok(period)
+    } else {
+        Err((StatusCode::BAD_REQUEST, format!("Unsupported usage period: {period}")))
+    }
+}
+
 pub async fn get_usage_stats(
+    Query(query): Query<UsagePeriodQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let stats = UsageRepo::stats(&conn).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(stats))
+    let period = selected_usage_period(query.period.as_deref())?;
+    let analytics = UsageRepo::analytics(&conn, period, chrono::Utc::now())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(analytics["stats"].clone()))
 }
 
 pub async fn get_usage_history(
+    Query(query): Query<UsagePeriodQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let history = UsageRepo::history(&conn, 50).unwrap_or_default();
-    Ok(Json(json!({ "history": history })))
+    let period = selected_usage_period(query.period.as_deref())?;
+    let analytics = UsageRepo::analytics(&conn, period, chrono::Utc::now())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({
+        "history": analytics["history"],
+        "breakdown": analytics["breakdown"],
+        "period": period
+    })))
 }
 
-pub async fn get_usage_logs() -> impl IntoResponse {
-    Json(json!({ "logs": [] }))
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageDetailsQuery {
+    pub period: Option<String>,
+    pub page: Option<usize>,
+    pub page_size: Option<usize>,
 }
 
-pub async fn get_usage_chart() -> impl IntoResponse {
-    let now = chrono::Utc::now();
-    let mut points = Vec::new();
-    for i in (0..24).rev() {
-        let hour = now - chrono::Duration::hours(i);
-        points.push(json!({
-            "timestamp": hour.to_rfc3339(),
-            "requests": 15 + (i % 7) * 4,
-            "tokens": (15 + (i % 7) * 4) * 850,
-            "cost": 0.012 * ((i % 5) as f64 + 1.0)
-        }));
+pub async fn get_usage_request_details(
+    Query(query): Query<UsageDetailsQuery>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let period = selected_usage_period(query.period.as_deref())?;
+    let analytics = UsageRepo::analytics(&conn, period, chrono::Utc::now())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let records = analytics["history"].as_array().cloned().unwrap_or_default();
+    let page_size = query.page_size.unwrap_or(20).clamp(1, 200);
+    let page = query.page.unwrap_or(1).max(1);
+    let total = records.len();
+    let start = (page - 1).saturating_mul(page_size).min(total);
+    let end = start.saturating_add(page_size).min(total);
+    let details = records[start..end].to_vec();
+    let total_pages = total.div_ceil(page_size);
+    Ok(Json(json!({
+        "details": details,
+        "pagination": {
+            "page": page,
+            "pageSize": page_size,
+            "totalItems": total,
+            "totalPages": total_pages,
+            "hasNext": page < total_pages,
+            "hasPrev": page > 1 && total_pages > 0
+        }
+    })))
+}
+
+pub async fn get_usage_logs(
+    Query(query): Query<UsagePeriodQuery>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let period = selected_usage_period(query.period.as_deref())?;
+    let analytics = UsageRepo::analytics(&conn, period, chrono::Utc::now())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "logs": analytics["logs"], "period": period })))
+}
+
+pub async fn get_usage_chart(
+    Query(query): Query<UsagePeriodQuery>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let period = selected_usage_period(query.period.as_deref())?;
+    let analytics = UsageRepo::analytics(&conn, period, chrono::Utc::now())
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "points": analytics["chart"], "period": period })))
+}
+
+fn quota_reset_at(value: Option<&serde_json::Value>) -> serde_json::Value {
+    let text = match value {
+        Some(serde_json::Value::String(value)) => {
+            if let Ok(number) = value.parse::<i64>() {
+                let seconds = if number.unsigned_abs() >= 1_000_000_000_000 { number / 1000 } else { number };
+                return chrono::DateTime::from_timestamp(seconds, 0)
+                    .map(|value| json!(value.to_rfc3339())).unwrap_or(json!(null));
+            }
+            value.clone()
+        }
+        Some(serde_json::Value::Number(value)) => {
+            let number = value.as_i64().unwrap_or_default();
+            let seconds = if number.unsigned_abs() >= 1_000_000_000_000 { number / 1000 } else { number };
+            chrono::DateTime::from_timestamp(seconds, 0)
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_default()
+        }
+        _ => String::new(),
+    };
+    if let Ok(value) = chrono::DateTime::parse_from_rfc3339(&text) {
+        json!(value.with_timezone(&chrono::Utc).to_rfc3339())
+    } else {
+        json!(null)
     }
-    Json(json!({ "points": points }))
 }
 
-// -------------------------------------------------------------
-// Quota Tracker Handlers
-// -------------------------------------------------------------
+fn quota_window(used: f64, total: f64, reset: Option<&serde_json::Value>, name: &str) -> serde_json::Value {
+    let remaining = (total - used).max(0.0);
+    json!({
+        "used": used,
+        "total": total,
+        "remaining": remaining,
+        "remainingPercentage": if total > 0.0 { remaining / total * 100.0 } else { 0.0 },
+        "resetAt": quota_reset_at(reset),
+        "unlimited": false,
+        "displayName": name
+    })
+}
+
+const ANTIGRAVITY_IMPORTANT_MODELS: &[&str] = &[
+    "gemini-4-argon-high", "gemini-4-argon-medium", "gemini-4-argon-low",
+    "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low",
+    "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low",
+    "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low",
+    "gemini-3.1-pro-high", "gemini-pro-agent", "gemini-3.1-pro-low",
+    "claude-sonnet-5-5-high", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-low",
+    "claude-sonnet-5-5", "claude-opus-5-5-high", "claude-opus-5-5-medium",
+    "claude-opus-5-5-low", "claude-opus-5-5", "claude-sonnet-4-6",
+    "claude-opus-4-6-thinking", "gpt-oss-120b-medium", "gemini-3.1-flash-image",
+];
+
+fn antigravity_quotas(data: &serde_json::Value, is_free_tier: bool) -> serde_json::Map<String, serde_json::Value> {
+    let mut quotas = serde_json::Map::new();
+    if !is_free_tier {
+        if let Some(models) = data.get("models").and_then(|value| value.as_object()) {
+            for (model, info) in models {
+                if !ANTIGRAVITY_IMPORTANT_MODELS.contains(&model.as_str())
+                    || info.get("isInternal").and_then(|value| value.as_bool()) == Some(true) { continue; }
+                let Some(quota) = info.get("quotaInfo") else { continue };
+                let fraction = quota.get("remainingFraction").and_then(|value| value.as_f64()).unwrap_or(0.0);
+                if !fraction.is_finite() { continue; }
+                quotas.insert(model.clone(), quota_window(
+                    (1.0 - fraction.clamp(0.0, 1.0)) * 1000.0,
+                    1000.0,
+                    quota.get("resetTime"),
+                    info.get("displayName").and_then(|value| value.as_str()).unwrap_or(model),
+                ));
+            }
+        }
+    }
+    quotas
+}
+
+fn reconcile_antigravity_sessions(quotas: &mut serde_json::Map<String, serde_json::Value>) {
+    for (session, prefix, include_image) in [("gemini_session", "gemini-", false), ("claude_gpt_session", "claude-", true)] {
+        let (count, exhausted, reset_at) = quotas.iter()
+            .filter(|(key, _)| key.starts_with(prefix) && (include_image || !key.contains("image")))
+            .fold((0, true, None::<String>), |(count, exhausted, latest), (_, quota)| {
+                let used_up = quota.get("remainingPercentage").and_then(|value| value.as_f64()).unwrap_or(0.0) == 0.0;
+                let reset = quota.get("resetAt").and_then(|value| value.as_str());
+                let latest = match (latest.as_deref(), reset) {
+                    (None, Some(reset)) => Some(reset.to_owned()),
+                    (Some(previous), Some(reset)) if reset > previous => Some(reset.to_owned()),
+                    _ => latest,
+                };
+                (count + 1, exhausted && used_up, latest)
+            });
+        if count == 0 || !exhausted { continue; }
+        let Some(window) = quotas.get_mut(session) else { continue; };
+        if window.get("remainingPercentage").and_then(|value| value.as_f64()).unwrap_or(0.0) == 0.0 { continue; }
+        window["remainingPercentage"] = serde_json::json!(0.0);
+        if let Some(reset_at) = reset_at { window["resetAt"] = serde_json::json!(reset_at); }
+    }
+}
+
+
+fn antigravity_weekly_quotas(data: &serde_json::Value, quotas: &mut serde_json::Map<String, serde_json::Value>) {
+    let groups = data.get("groups").and_then(|value| value.as_array())
+        .or_else(|| data.pointer("/quotaSummary/groups").and_then(|value| value.as_array()));
+    let Some(groups) = groups else { return };
+    for group in groups {
+        let label = group.get("displayName").and_then(|value| value.as_str()).unwrap_or("");
+        let family = if label.to_lowercase().contains("gemini") { "gemini" }
+            else if label.to_lowercase().contains("claude") || label.to_lowercase().contains("gpt") { "claude_gpt" }
+            else { continue };
+        for bucket in group.get("buckets").and_then(|value| value.as_array()).into_iter().flatten() {
+            let window = bucket.get("window").and_then(|value| value.as_str()).unwrap_or("").to_lowercase();
+            let text = format!("{} {}", bucket.get("bucketId").and_then(|v| v.as_str()).unwrap_or(""), bucket.get("displayName").and_then(|v| v.as_str()).unwrap_or("")).to_lowercase();
+            let weekly = window == "weekly" || text.contains("weekly");
+            let session = ["5h", "daily"].contains(&window.as_str()) || text.contains("five hour") || text.contains("5h") || text.contains("daily");
+            if (!weekly && !session) || (weekly && bucket.get("disabled").and_then(|v| v.as_bool()) == Some(true)) { continue; }
+            let Some(mut fraction) = bucket.get("remainingFraction").and_then(|v| v.as_f64()) else { continue };
+            if bucket.get("disabled").and_then(|v| v.as_bool()) == Some(true) { fraction = 0.0; }
+            let key = format!("{}_{}", family, if weekly { "weekly" } else { "session" });
+            let name = format!("{} ({})", if family == "gemini" { "Gemini" } else { "Claude & GPT" }, if weekly { "Weekly" } else { "5h" });
+            quotas.entry(key).or_insert_with(|| quota_window(
+                (1.0 - fraction.clamp(0.0, 1.0)) * 1000.0,
+                1000.0,
+                bucket.get("resetTime"),
+                &name,
+            ));
+        }
+    }
+}
+
+fn codex_quotas(data: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    let mut quotas = serde_json::Map::new();
+    let by_limit = data.get("rate_limits_by_limit_id").filter(|value| value.is_object()).unwrap_or(&serde_json::Value::Null);
+    let review = data.get("code_review_rate_limit").or_else(|| data.get("review_rate_limit"))
+        .or_else(|| by_limit.get("code_review")).or_else(|| by_limit.get("codex_review")).or_else(|| by_limit.get("review"))
+        .or_else(|| data.get("additional_rate_limits").and_then(|value| value.as_array()).into_iter().flatten().find(|entry| {
+            entry.get("limit_name").or_else(|| entry.get("metered_feature")).or_else(|| entry.get("id"))
+                .and_then(|value| value.as_str()).is_some_and(|id| id.to_lowercase().contains("review"))
+        }));
+    let spark = data.get("spark_rate_limit").or_else(|| data.get("gpt_5_3_codex_spark_rate_limit"))
+        .or_else(|| by_limit.get("gpt-5.3-codex-spark")).or_else(|| by_limit.get("gpt_5_3_codex_spark")).or_else(|| by_limit.get("spark"))
+        .or_else(|| data.get("additional_rate_limits").and_then(|value| value.as_array()).into_iter().flatten().find(|entry| {
+            entry.get("limit_name").or_else(|| entry.get("metered_feature")).or_else(|| entry.get("id"))
+                .and_then(|value| value.as_str()).is_some_and(|id| { let id = id.to_lowercase(); id.contains("spark") || id.contains("5.3-codex-spark") })
+        }));
+    let normal = data.get("rate_limit").filter(|value| value.is_object())
+        .or_else(|| data.get("rate_limits").filter(|value| value.is_object()))
+        .or_else(|| by_limit.get("codex"));
+    for (prefix, snapshot) in [("", normal), ("review", review), ("spark", spark)] {
+        let Some(snapshot) = snapshot else { continue };
+        let limits = snapshot.get("rate_limit").filter(|value| value.is_object()).unwrap_or(snapshot);
+        for (kind, primary, fallback, name) in [
+            ("session", "primary_window", "primary", "Session"),
+            ("weekly", "secondary_window", "secondary", "Weekly"),
+        ] {
+            let window = limits.get(primary).or_else(|| limits.get(fallback))
+                .or_else(|| snapshot.get(primary)).or_else(|| snapshot.get(fallback));
+            let Some(window) = window else { continue };
+            let Some(percent) = window.get("used_percent").or_else(|| window.get("percent_used")).and_then(|value| value.as_f64()) else { continue };
+            let key = if prefix.is_empty() { kind.to_owned() } else { format!("{prefix}_{kind}") };
+            let display_name = match prefix { "review" => format!("Code review {name}") , "spark" => format!("Spark {name}"), _ => name.to_owned() };
+            quotas.insert(key, quota_window(
+                percent.clamp(0.0, 100.0), 100.0,
+                window.get("reset_at").or_else(|| window.get("resets_at")).or_else(|| window.get("resetAt")),
+                &display_name,
+            ));
+        }
+    }
+    quotas
+}
+
+async fn fetch_connection_quota(connection: &ProviderConnection) -> serde_json::Value {
+    let access_token = connection.data.get("accessToken").and_then(|value| value.as_str()).unwrap_or("");
+    if !matches!(connection.provider.as_str(), "antigravity" | "codex") {
+        return json!({ "plan": null, "quotas": {}, "message": format!("Live quota is not supported for provider {}.", connection.provider) });
+    }
+    if access_token.is_empty() || access_token.starts_with("oauth_") || access_token == "oauth_token_active" {
+        return json!({ "plan": null, "quotas": {}, "message": "A usable OAuth access token is not saved for this connection." });
+    }
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {
+        Ok(client) => client,
+        Err(_) => return json!({ "plan": null, "quotas": {}, "message": "Could not initialize the provider quota client." }),
+    };
+    let result = if connection.provider == "antigravity" {
+        let user_agent = "antigravity/hub/2.24.0 darwin/arm64";
+        let metadata = json!({ "metadata": { "ideType": 9, "platform": 3, "pluginType": 2 }, "mode": 1 });
+        let subscription = match client.post("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
+            .bearer_auth(access_token).header("User-Agent", user_agent).json(&metadata).send().await {
+            Ok(response) if response.status().is_success() => response.json::<serde_json::Value>().await.ok(),
+            _ => None,
+        };
+        let project = subscription.as_ref().and_then(|value| value.get("cloudaicompanionProject"))
+            .and_then(|value| value.as_str()).map(|value| value.to_owned());
+        let body = project.map(|project| json!({"project": project})).unwrap_or_else(|| json!({}));
+        let response = client.post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")
+            .bearer_auth(access_token).header("User-Agent", user_agent).header("X-Client-Name", "antigravity")
+            .header("X-Client-Version", "2.24.0").json(&body).send().await;
+        match response {
+            Ok(response) if response.status().is_success() => match response.json::<serde_json::Value>().await {
+                Ok(data) => {
+                    let is_free_tier = subscription.as_ref()
+                        .and_then(|value| value.pointer("/paidTier/id"))
+                        .and_then(|value| value.as_str())
+                        .is_none_or(|id| id == "free-tier");
+                    let mut quotas = antigravity_quotas(&data, is_free_tier);
+                    if let Ok(response) = client.post("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
+                        .bearer_auth(access_token).header("User-Agent", user_agent).header("X-Client-Name", "antigravity")
+                        .header("X-Client-Version", "2.24.0").json(&body).send().await {
+                        if response.status().is_success() {
+                            if let Ok(summary) = response.json::<serde_json::Value>().await { antigravity_weekly_quotas(&summary, &mut quotas); }
+                        }
+                    }
+                    reconcile_antigravity_sessions(&mut quotas);
+                    let plan = subscription.as_ref().and_then(|value| value.pointer("/currentTier/name"))
+                        .and_then(|value| value.as_str()).unwrap_or("Unknown");
+                    json!({"plan": plan, "quotas": quotas})
+                }
+                Err(_) => json!({"plan": null, "quotas": {}, "message": "Antigravity returned an invalid quota response."}),
+            },
+            Ok(response) => json!({"plan": null, "quotas": {}, "message": format!("Antigravity quota API unavailable (HTTP {}).", response.status().as_u16())}),
+            Err(_) => json!({"plan": null, "quotas": {}, "message": "Antigravity quota API request failed or timed out."}),
+        }
+    } else {
+        match client.get("https://chatgpt.com/backend-api/wham/usage")
+            .bearer_auth(access_token).header("Accept", "application/json").send().await {
+            Ok(response) if response.status().is_success() => match response.json::<serde_json::Value>().await {
+                Ok(data) => json!({
+                    "plan": data.get("plan_type").or_else(|| data.pointer("summary.plan")),
+                    "quotas": codex_quotas(&data)
+                }),
+                Err(_) => json!({"plan": null, "quotas": {}, "message": "Codex returned an invalid quota response."}),
+            },
+            Ok(response) => json!({"plan": null, "quotas": {}, "message": format!("Codex quota API unavailable (HTTP {}).", response.status().as_u16())}),
+            Err(_) => json!({"plan": null, "quotas": {}, "message": "Codex quota API request failed or timed out."}),
+        }
+    };
+    result
+}
+
+pub async fn get_connection_usage(
+    Path(connection_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let connection = ConnectionsRepo::get_by_id(&conn, &connection_id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, "Connection not found".to_string()))?;
+    let mut usage = fetch_connection_quota(&connection).await;
+    if let Some(object) = usage.as_object_mut() { object.insert("connectionId".into(), json!(connection.id)); }
+    Ok(Json(usage))
+}
 
 pub async fn get_quota(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let connections = ConnectionsRepo::list_all(&conn).unwrap_or_default();
-
-    let mut quota_items = Vec::new();
-
-    if connections.is_empty() {
-        let presets = [
-            ("openai", "OpenAI Primary", "healthy", 4850, 5000, 950000, 1000000, "03:42:15"),
-            ("anthropic", "Anthropic Claude Pro", "healthy", 980, 1000, 390000, 400000, "02:15:00"),
-            ("gemini", "Google AI Studio", "healthy", 1450, 1500, 990000, 1000000, "05:00:00"),
-            ("groq", "Groq LPU Tier 1", "healthy", 29800, 30000, 1490000, 1500000, "00:45:30"),
-            ("deepseek", "DeepSeek API", "healthy", 9950, 10000, 4980000, 5000000, "07:20:10"),
-            ("tavily", "Tavily Search API", "healthy", 980, 1000, 0, 0, "12:00:00"),
-        ];
-
-        for (provider, name, status, req_rem, req_lim, tok_rem, tok_lim, countdown) in presets {
-            quota_items.push(json!({
-                "id": format!("{}_default", provider),
-                "provider": provider,
-                "name": name,
-                "status": status,
-                "is_active": true,
-                "requests_remaining": req_rem,
-                "requests_limit": req_lim,
-                "tokens_remaining": tok_rem,
-                "tokens_limit": tok_lim,
-                "percent_used": ((req_lim - req_rem) as f64 / req_lim as f64) * 100.0,
-                "reset_countdown": countdown,
-                "last_checked": chrono::Utc::now().to_rfc3339()
-            }));
-        }
-    } else {
-        for c in connections {
-            let status = if c.is_active { "healthy" } else { "degraded" };
-            quota_items.push(json!({
-                "id": c.id,
-                "provider": c.provider,
-                "name": c.name.unwrap_or_else(|| c.provider.clone()),
-                "status": status,
-                "is_active": c.is_active,
-                "requests_remaining": 4920,
-                "requests_limit": 5000,
-                "tokens_remaining": 984000,
-                "tokens_limit": 1000000,
-                "percent_used": 1.6,
-                "reset_countdown": "04:12:00",
-                "last_checked": chrono::Utc::now().to_rfc3339()
-            }));
-        }
+    let connections = ConnectionsRepo::list_all(&conn).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut quota_items = Vec::with_capacity(connections.len());
+    for connection in connections {
+        let usage = fetch_connection_quota(&connection).await;
+        quota_items.push(json!({
+            "id": connection.id,
+            "provider": connection.provider,
+            "name": connection.name,
+            "email": connection.email,
+            "is_active": connection.is_active,
+            "plan": usage.get("plan").cloned().unwrap_or(serde_json::Value::Null),
+            "quotas": usage.get("quotas").cloned().unwrap_or_else(|| json!({})),
+            "message": usage.get("message"),
+            "last_checked": chrono::Utc::now().to_rfc3339()
+        }));
     }
-
-    Ok(Json(json!({
-        "object": "list",
-        "data": quota_items
-    })))
+    Ok(Json(json!({ "object": "list", "data": quota_items })))
 }
 
 // -------------------------------------------------------------
@@ -788,4 +1059,79 @@ pub async fn get_version() -> impl IntoResponse {
         "update_available": false,
         "latest_version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+#[cfg(test)]
+mod quota_tests {
+    use super::{antigravity_quotas, antigravity_weekly_quotas, codex_quotas, reconcile_antigravity_sessions};
+    use serde_json::json;
+
+    #[test]
+    fn maps_only_paid_public_antigravity_models() {
+        let data = json!({"models": {
+            "gemini-3.8-flash-high": {"displayName": "Gemini Real", "quotaInfo": {"remainingFraction": 0.25, "resetTime": "2026-11-01T01:00:00Z"}},
+            "gemini-3.8-flash-medium": {"isInternal": true, "quotaInfo": {"remainingFraction": 0.5}},
+            "gemini-3.8-flash-other": {"quotaInfo": {"remainingFraction": 0.5}},
+            "unlisted": {"quotaInfo": {"remainingFraction": 0.5}},
+            "without-quota": {"displayName": "No quota"}
+        }});
+        let mut quotas = antigravity_quotas(&data, false);
+        assert_eq!(quotas.len(), 1);
+        assert_eq!(quotas["gemini-3.8-flash-high"]["used"], 750.0);
+        assert_eq!(quotas["gemini-3.8-flash-high"]["remainingPercentage"], 25.0);
+        assert!(antigravity_quotas(&data, true).is_empty());
+        antigravity_weekly_quotas(&json!({"groups": [{
+            "displayName": "Gemini",
+            "buckets": [
+                {"window": "weekly", "remainingFraction": 0.5, "resetTime": "2026-11-03T00:00:00Z"},
+                {"window": "5h", "remainingFraction": 0.75, "resetTime": "2026-10-29T00:00:00Z"}
+            ]
+        }]}), &mut quotas);
+        assert_eq!(quotas.len(), 3);
+        assert_eq!(quotas["gemini_weekly"]["remainingPercentage"], 50.0);
+        assert_eq!(quotas["gemini_session"]["remainingPercentage"], 75.0);
+    }
+
+    #[test]
+    fn exhausted_model_windows_override_session_until_latest_model_reset() {
+        let mut quotas = json!({
+            "gemini-3.8-flash-high": {"remainingPercentage": 0.0, "resetAt": "2026-11-02T00:00:00+00:00"},
+            "gemini-3.7-flash-high": {"remainingPercentage": 0.0, "resetAt": "2026-11-03T00:00:00+00:00"},
+            "gemini-3.1-flash-image": {"remainingPercentage": 0.0, "resetAt": "2026-12-01T00:00:00+00:00"},
+            "gemini_session": {"remainingPercentage": 50.0, "resetAt": "2026-11-01T00:00:00+00:00"}
+        }).as_object().unwrap().clone();
+        reconcile_antigravity_sessions(&mut quotas);
+        assert_eq!(quotas["gemini_session"]["remainingPercentage"], 0.0);
+        assert_eq!(quotas["gemini_session"]["resetAt"], "2026-11-03T00:00:00+00:00");
+    }
+
+    #[test]
+    fn non_exhausted_models_do_not_override_session_quota() {
+        let mut quotas = json!({
+            "claude-sonnet-5-5-high": {"remainingPercentage": 0.0},
+            "claude-opus-5-5-high": {"remainingPercentage": 1.0},
+            "claude_gpt_session": {"remainingPercentage": 60.0}
+        }).as_object().unwrap().clone();
+        reconcile_antigravity_sessions(&mut quotas);
+        assert_eq!(quotas["claude_gpt_session"]["remainingPercentage"], 60.0);
+    }
+
+
+    #[test]
+    fn maps_codex_primary_and_secondary_windows() {
+        let quotas = codex_quotas(&json!({
+            "rate_limit": {
+                "primary_window": {"used_percent": 20, "reset_at": 1_800_000_000_i64},
+                "secondary_window": {"percent_used": 65, "reset_at": "1800000100"}
+            },
+            "code_review_rate_limit": {"rate_limit": {"primary_window": {"used_percent": 10}}},
+            "additional_rate_limits": [{"limit_name": "gpt-5.3-codex-spark", "rate_limit": {"secondary_window": {"used_percent": 45}}}]
+        }));
+        assert_eq!(quotas["review_session"]["remainingPercentage"], 90.0);
+        assert!((quotas["spark_weekly"]["remainingPercentage"].as_f64().unwrap() - 55.0).abs() < 1e-9);
+        assert_eq!(quotas["session"]["remainingPercentage"], 80.0);
+        assert_eq!(quotas["weekly"]["remainingPercentage"], 35.0);
+        assert_eq!(quotas["session"]["resetAt"], "2027-01-15T08:00:00+00:00");
+        assert_eq!(quotas["weekly"]["resetAt"], "2027-01-15T08:01:40+00:00");
+    }
 }

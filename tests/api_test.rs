@@ -436,7 +436,7 @@ async fn test_slice2_admin_and_proxy_endpoints() {
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let val: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(val["data"].as_array().unwrap().len() >= 1);
+    assert!(val["data"].as_array().unwrap().is_empty());
 
     // 3. POST /api/proxy-pools and GET /api/proxy-pools
     let req = Request::builder()

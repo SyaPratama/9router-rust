@@ -7,6 +7,7 @@ use crate::api::middleware::AppState;
 use crate::routing::create_sse_response;
 use crate::translator::ResponsesTranslator;
 
+use crate::api::handlers::chat::record_usage;
 pub async fn handle_responses(
     State(state): State<AppState>,
     Json(payload): Json<Value>,
@@ -14,17 +15,26 @@ pub async fn handle_responses(
     let stream = payload.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
     let chat_req = ResponsesTranslator::responses_to_chat_request(&payload);
 
-    let resp = state.engine.dispatch_chat(chat_req).await?;
+    let dispatch = state.engine.dispatch_chat(chat_req).await?;
+    let provider = dispatch.provider;
+    let model = dispatch.model;
+    let connection_id = dispatch.connection_id;
+    let resp = dispatch.response;
 
     if stream {
-        let stream = resp.bytes_stream();
-        let sse = create_sse_response(stream);
+        if resp.status().is_success() {
+            record_usage(state.engine.pool.clone(), provider, model, connection_id, "/v1/responses", None, "accepted");
+        }
+        let sse = create_sse_response(resp.bytes_stream());
         Ok(sse.into_response())
     } else {
         let status = resp.status();
         let body_bytes = resp.bytes().await.map_err(|e| {
             (StatusCode::BAD_GATEWAY, format!("Failed reading upstream response: {}", e))
         })?;
+        if status.is_success() {
+            record_usage(state.engine.pool.clone(), provider, model, connection_id, "/v1/responses", Some(&body_bytes), "success");
+        }
 
         if let Ok(openai_val) = serde_json::from_slice::<Value>(&body_bytes) {
             let responses_val = ResponsesTranslator::chat_completion_to_responses(&openai_val);

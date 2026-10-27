@@ -56,10 +56,14 @@ pub fn routes() -> Router<AppState> {
         .route("/keys/{id}", delete(handlers::admin::delete_key))
         // Usage Stats & Details
         .route("/usage/stats", get(handlers::admin::get_usage_stats))
+.route("/usage/request-details", get(handlers::admin::get_usage_request_details))
         .route("/usage/history", get(handlers::admin::get_usage_history))
         .route("/usage/logs", get(handlers::admin::get_usage_logs))
         .route("/usage/chart", get(handlers::admin::get_usage_chart))
-        // Token Saver & Headroom
+        .route(
+            "/usage/{connectionId}",
+            get(handlers::admin::get_connection_usage),
+        )
         .route("/headroom/status", get(handlers::admin::get_headroom_status))
         .route("/headroom/toggle", post(handlers::admin::toggle_headroom))
         .route("/headroom/extras", post(handlers::admin::toggle_headroom))

@@ -36,7 +36,9 @@
 
 ## 🖥️ Dashboard Surfaces
 
-The embedded single-page management application (built with Svelte 5 and embedded zero-copy via `rust-embed`) provides 100% visual and functional parity with the original 9Router control plane.
+The embedded single-page management application (Svelte 5, embedded by `rust-embed`) provides provider configuration, gateway usage, and quota views.
+
+Usage analytics aggregate persisted gateway request records by period. Live quota checks are supported for Antigravity and Codex connections with usable OAuth credentials; other providers and unavailable credentials are reported as unavailable rather than estimated.
 
 ### 1. Provider Catalog & Multi-Account Management
 Browse and configure all 142 supported providers across OAuth, Free Tier, and API Key categories with real-time status pills and failover toggles.
