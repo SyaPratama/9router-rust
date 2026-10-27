@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import providerRegistry from './lib/provider-registry.json';
   import agentSkillsList from './lib/agent-skills.json';
+  import { BarChart3, Gauge, KeyRound, Layers, Menu, Network, Terminal, X, Zap } from '@lucide/svelte';
+  import UsageFlowPanel from './lib/UsageFlowPanel.svelte';
 
   // -------------------------------------------------------------
   // Application State
@@ -16,6 +18,7 @@
   let theme = $state('dark');
   let version = $state('v0.5.111 (Rust)');
   let mediaOpen = $state(false);
+  let mobileMenuOpen = $state(false);
 
   // Data collections
   let connections = $state([]);
@@ -50,18 +53,33 @@
   let usageTab = $state('overview'); // 'overview' | 'details' | 'logs'
   let usagePeriod = $state('all');
   let usageBreakdown = $state([]);
-  let usageLogs = $state([]);
   let usageChart = $state([]);
   let usageDetails = $state([]);
   let usageDetailsPage = $state(1);
   let usageDetailsPagination = $state({ page: 1, pageSize: 200, totalItems: 0, totalPages: 0, hasNext: false, hasPrev: false });
   let usageLoading = $state(false);
   let usageError = $state('');
+  let usageLogs = $state([]);
   let usageDetailsError = $state('');
+  let recentUsage = $state([]);
+  let recentUsageError = $state('');
+  let recentUsageLoaded = $state(false);
+  let activeFlowProviders = $state([]);
+  let recentUsagePolling = false;
+  let lastUsageRequestId = null;
+  let liveFlowTimeout = 0;
   let selectedCliTool = $state(null);
   let quotaFilter = $state('all'); // 'all' | 'active'
   let quotaProviderFilter = $state('all');
 
+  let usageProviderFlow = $derived.by(() => Object.entries(usageStats.byProvider || {})
+    .map(([provider, totals]) => ({
+      provider,
+      requests: totals.requests || 0,
+      lastSeen: recentUsage.find(request => request.provider === provider)?.timestamp || null,
+    }))
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 8));
   // Search & Filters for Providers
   let providerSearch = $state('');
   let providerStatusFilter = $state('all'); // 'all' | 'active' | 'inactive' | 'no-connection'
@@ -352,11 +370,41 @@
       usageLoading = false;
     }
   }
+  async function refreshRecentUsage(animateNew = true) {
+    if (recentUsagePolling) return;
+    recentUsagePolling = true;
+    try {
+      const response = await fetch(`/api/usage/request-details?period=${usagePeriod}&page=1&pageSize=12`);
+      if (!response.ok) throw new Error(`Recent requests request failed (${response.status})`);
+      const data = await response.json();
+      const requests = data.details || [];
+      const latestId = requests.reduce((latest, request) => Math.max(latest, Number(request.id) || 0), 0);
+      recentUsage = requests;
+      if (lastUsageRequestId === null) {
+        lastUsageRequestId = latestId;
+      } else if (animateNew && latestId > lastUsageRequestId) {
+        const newRequests = requests.filter(request => Number(request.id) > lastUsageRequestId);
+        activeFlowProviders = [...new Set(newRequests.map(request => request.provider).filter(Boolean))];
+        clearTimeout(liveFlowTimeout);
+        liveFlowTimeout = window.setTimeout(() => { activeFlowProviders = []; }, 1500);
+        lastUsageRequestId = latestId;
+        await Promise.all([loadUsage(), loadUsageDetails()]);
+      } else {
+        lastUsageRequestId = Math.max(lastUsageRequestId, latestId);
+      }
+      recentUsageError = '';
+    } catch (error) {
+      recentUsageError = error.message || 'Recent requests could not be loaded.';
+    } finally {
+      recentUsageLoaded = true;
+      recentUsagePolling = false;
+    }
+  }
 
   async function loadUsageForPeriod(period) {
     usagePeriod = period;
     usageDetailsPage = 1;
-    await Promise.all([loadUsage(), loadUsageDetails()]);
+    await Promise.all([loadUsage(), loadUsageDetails(), refreshRecentUsage(false)]);
   }
 
   async function loadSettings() {
@@ -596,6 +644,7 @@
   // -------------------------------------------------------------
   function setView(view) {
     activeView = view;
+    mobileMenuOpen = false;
     if (typeof window !== 'undefined') window.location.hash = view;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -622,6 +671,10 @@
       if (h) activeView = h;
     };
     window.addEventListener('hashchange', onHashChange);
+    const usagePoll = window.setInterval(() => {
+      if (activeView === 'usage') refreshRecentUsage(true);
+    }, 3000);
+    if (activeView === 'usage') refreshRecentUsage(false);
 
     function handleOAuthMessage(event) {
       if (event.data?.type === 'oauth_callback' && event.data?.data) {
@@ -635,6 +688,9 @@
 
     window.addEventListener('message', handleOAuthMessage);
     return () => {
+      window.clearInterval(usagePoll);
+      clearTimeout(liveFlowTimeout);
+      window.removeEventListener('hashchange', onHashChange);
       window.removeEventListener('message', handleOAuthMessage);
     };
   });
@@ -697,38 +753,42 @@
           <span>9Router</span>
         </div>
         <span class="version-pill">{version}</span>
+        <button class="mobile-menu-toggle" type="button" aria-controls="dashboard-navigation" aria-expanded={mobileMenuOpen} onclick={() => mobileMenuOpen = !mobileMenuOpen}>
+          {#if mobileMenuOpen}<X size={18} aria-hidden="true" />{:else}<Menu size={18} aria-hidden="true" />{/if}
+          <span>{mobileMenuOpen ? 'Close menu' : 'Menu'}</span>
+        </button>
       </div>
 
-      <nav>
+      <nav id="dashboard-navigation" class:mobile-open={mobileMenuOpen}>
         <div class="nav-section">Gateway</div>
         <button class={activeView === 'providers' || activeView === 'provider-detail' ? 'active' : ''} onclick={() => setView('providers')}>
-          <span class="material-symbols-outlined">api</span>
+          <Network size={18} aria-hidden="true" />
           <span>Providers</span>
         </button>
         <button class={activeView === 'endpoint' ? 'active' : ''} onclick={() => setView('endpoint')}>
-          <span class="material-symbols-outlined">dns</span>
+          <KeyRound size={18} aria-hidden="true" />
           <span>Endpoint &amp; Key</span>
         </button>
         <button class={activeView === 'combos' ? 'active' : ''} onclick={() => setView('combos')}>
-          <span class="material-symbols-outlined">layers</span>
+          <Layers size={18} aria-hidden="true" />
           <span>Combos</span>
         </button>
         <button class={activeView === 'usage' ? 'active' : ''} onclick={() => setView('usage')}>
-          <span class="material-symbols-outlined">bar_chart</span>
+          <BarChart3 size={18} aria-hidden="true" />
           <span>Usage</span>
         </button>
         <button class={activeView === 'quota' ? 'active' : ''} onclick={() => setView('quota')}>
-          <span class="material-symbols-outlined">data_usage</span>
+          <Gauge size={18} aria-hidden="true" />
           <span>Quota Tracker</span>
         </button>
         <button class={activeView === 'token-saver' ? 'active' : ''} onclick={() => setView('token-saver')}>
-          <span class="material-symbols-outlined">savings</span>
+          <Zap size={18} aria-hidden="true" />
           <span>Token Saver</span>
         </button>
 
         <div class="nav-section">Tools</div>
         <button class={activeView === 'cli-tools' ? 'active' : ''} onclick={() => setView('cli-tools')}>
-          <span class="material-symbols-outlined">terminal</span>
+          <Terminal size={18} aria-hidden="true" />
           <span>CLI Tools</span>
         </button>
         <button class={activeView === 'translator' ? 'active' : ''} onclick={() => setView('translator')}>
@@ -1370,6 +1430,7 @@
           {/if}
 
           {#if usageTab === 'overview'}
+            <UsageFlowPanel providers={usageProviderFlow} requests={recentUsage} activeProviders={activeFlowProviders} period={usagePeriod} error={recentUsageError} loading={!recentUsageLoaded} routesLoading={usageLoading && !usageProviderFlow.length} />
             <div class="kpi-grid">
               <div class="kpi-card">
                 <div class="kpi-label">Total Requests</div>

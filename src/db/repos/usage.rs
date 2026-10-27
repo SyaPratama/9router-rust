@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageRecord {
     pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<i64>,
     pub provider: Option<String>,
     pub model: Option<String>,
     #[serde(rename = "connectionId")]
@@ -174,7 +176,7 @@ impl UsageRepo {
 
     fn query_history(conn: &Connection, cutoff: Option<&str>, limit: usize) -> Result<Vec<UsageRecord>> {
         let mut stmt = conn.prepare(
-            "SELECT timestamp, provider, model, connectionId, apiKey, endpoint,
+            "SELECT id, timestamp, provider, model, connectionId, apiKey, endpoint,
                     promptTokens, completionTokens, cost, status, tokens, meta
              FROM usageHistory
              WHERE (?1 IS NULL OR julianday(timestamp) >= julianday(?1))
@@ -183,18 +185,19 @@ impl UsageRepo {
         )?;
         let rows = stmt.query_map(params![cutoff, limit.min(i64::MAX as usize) as i64], |row| {
             Ok(UsageRecord {
-                timestamp: row.get(0)?,
-                provider: row.get(1)?,
-                model: row.get(2)?,
-                connection_id: row.get(3)?,
-                api_key: row.get(4)?,
-                endpoint: row.get(5)?,
-                prompt_tokens: row.get(6)?,
-                completion_tokens: row.get(7)?,
-                cost: row.get(8)?,
-                status: row.get(9)?,
-                tokens: row.get(10)?,
-                meta: row.get(11)?,
+                id: Some(row.get(0)?),
+                timestamp: row.get(1)?,
+                provider: row.get(2)?,
+                model: row.get(3)?,
+                connection_id: row.get(4)?,
+                api_key: row.get(5)?,
+                endpoint: row.get(6)?,
+                prompt_tokens: row.get(7)?,
+                completion_tokens: row.get(8)?,
+                cost: row.get(9)?,
+                status: row.get(10)?,
+                tokens: row.get(11)?,
+                meta: row.get(12)?,
             })
         })?;
         rows.collect()
@@ -222,6 +225,7 @@ mod tests {
             connection_id: None, api_key: Some("secret".into()), endpoint: None,
             prompt_tokens: Some(input), completion_tokens: Some(output), cost: Some(cost), status: Some("success".into()),
             tokens: None, meta: None,
+            id: None,
         }
     }
 
@@ -245,6 +249,7 @@ mod tests {
         assert_eq!(data["chart"][0]["tokens"], 23);
         assert!(data["logs"].as_array().unwrap().iter().any(|log| log.as_str().unwrap().contains("| p1 |")));
         assert_eq!(data["history"][0]["model"], "m2");
+        assert!(data["history"][0]["id"].as_i64() > data["history"][1]["id"].as_i64());
         assert!(!serde_json::to_string(&data).unwrap().contains("m3"));
         assert!(!serde_json::to_string(&data).unwrap().contains("secret"));
     }
