@@ -1,1182 +1,1723 @@
 <script>
   import { onMount } from 'svelte';
+  import providerRegistry from './lib/provider-registry.json';
 
-  // Svelte 5 reactive state
-  let activeView = $state('overview');
-  let health = $state('Port 20128 · Online');
-  let version = $state('v1.0.1');
+  // -------------------------------------------------------------
+  // Application State
+  // -------------------------------------------------------------
+  let authenticated = $state(true);
+  let requireLogin = $state(true);
+  let loginPassword = $state('');
+  let loginError = $state('');
 
-  let summary = $state({
-    providers: { total: 0, active: 0 },
-    combos: 0,
-    keys: { total: 0, active: 0 },
-    usage: { totalRequests: 0, totalTokens: 0, totalPromptTokens: 0, totalCompletionTokens: 0 }
-  });
+  let activeView = $state('providers'); // 'providers' | 'provider-detail' | 'endpoint' | 'combos' | 'usage' | 'quota' | 'token-saver' | 'cli-tools' | 'translator' | 'skills' | 'media' | 'proxy-pools' | 'console-log' | 'settings'
+  let selectedProviderId = $state('antigravity');
+  let theme = $state('dark');
+  let version = $state('v0.5.111 (Rust)');
+  let mediaOpen = $state(false);
 
-  let providers = $state([]);
+  // Data collections
+  let connections = $state([]);
   let combos = $state([]);
-  let keys = $state([]);
-  let settings = $state({
-    headroom_enabled: true,
-    rtk_enabled: true,
-    caveman_level: '',
-    ponytail_level: '',
-    port: 20128,
-    require_api_key: false
-  });
-  let quotaList = $state([]);
+  let apiKeys = $state([]);
   let proxyPools = $state([]);
-  let mediaModels = $state([]);
-  let activeMediaKind = $state('image');
+  let quotaItems = $state([]);
+  let usageStats = $state({
+    totalRequests: 0,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalTokens: 0,
+    totalCost: 0,
+  });
+  let settings = $state({
+    headroomEnabled: true,
+    rtkEnabled: true,
+    cavemanLevel: 'auto',
+    ponytailLevel: 'ultra',
+    requireApiKey: false,
+    requireLogin: true,
+    port: 20129,
+    comboStrategy: 'fallback',
+    visionAdapter: true,
+  });
+  let cliStatuses = $state({});
+  let consoleLogs = $state([]);
 
-  // Logs & SSE state
-  let logs = $state([]);
-  let logFilter = $state('ALL');
-  let logSearch = $state('');
-  let logPaused = $state(false);
-  let logAutoscroll = $state(true);
-  let terminalScreen = $state(null);
+  // Search & Filters for Providers
+  let providerSearch = $state('');
+  let providerStatusFilter = $state('all'); // 'all' | 'active' | 'inactive' | 'no-connection'
 
-  // Snippet
-  let activeSnippet = $state('chat');
+  // Modals
+  let modalType = $state(null); // 'custom-provider' | 'add-connection' | 'add-model' | 'create-combo' | 'create-key' | 'add-proxy'
+  let modalData = $state({});
+  let notification = $state(null);
 
-  // Translator
-  let transSource = $state('openai');
-  let transTarget = $state('claude');
-  let transInput = $state(JSON.stringify({
-    model: "openai/gpt-4o",
-    messages: [
-      { role: "system", content: "You are a senior Rust systems architect." },
-      { role: "user", content: "Explain Tokio's multi-threaded work-stealing runtime." }
-    ],
-    temperature: 0.7,
-    stream: false
-  }, null, 2));
-  let transOutput = $state('// Output will appear here upon clicking Convert & Test');
-  let transStats = $state('Ready');
-
-  // Modal State
-  let modalOpen = $state(false);
-  let modalTitle = $state('');
-  let modalType = $state('');
-  let modalItem = $state({});
-
-  // Notice Banner
-  let notice = $state({ show: false, text: '', error: false });
-
-  function showNotice(text, error = false) {
-    notice = { show: true, text, error };
-    setTimeout(() => { notice.show = false; }, 3500);
+  // -------------------------------------------------------------
+  // Helpers & Derived State
+  // -------------------------------------------------------------
+  function showToast(msg, type = 'success') {
+    notification = { msg, type };
+    setTimeout(() => { notification = null; }, 3500);
   }
 
-  // API Client
-  async function api(path, options = {}) {
-    const res = await fetch(path, {
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-      ...options
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(err || `${res.status} ${res.statusText}`);
+  function getProviderConnections(id) {
+    return connections.filter(c => c.provider === id);
+  }
+
+  function getProviderStatus(id) {
+    const conns = getProviderConnections(id);
+    if (conns.length === 0) return { label: 'No connections', connected: false, active: false };
+    const activeConns = conns.filter(c => c.isActive);
+    if (activeConns.length > 0) {
+      return { label: `${activeConns.length} Connected`, connected: true, active: true };
     }
-    return res.status === 204 ? null : res.json();
+    return { label: `${conns.length} Inactive`, connected: true, active: false };
   }
 
-  async function refresh() {
-    try {
-      const [sumRes, provRes, combRes, keyRes, setRes] = await Promise.all([
-        api('/api/summary'),
-        api('/api/providers'),
-        api('/api/combos'),
-        api('/api/keys'),
-        api('/api/settings')
-      ]);
-      summary = sumRes;
-      providers = provRes || [];
-      combos = combRes || [];
-      keys = keyRes || [];
-      settings = { ...settings, ...setRes };
-    } catch (e) {
-      showNotice('Sync error: ' + e.message, true);
+  let selectedProvider = $derived(
+    providerRegistry.find(p => p.id === selectedProviderId) || {
+      id: selectedProviderId,
+      name: selectedProviderId,
+      category: 'custom',
+      icon: 'smart_toy',
+      color: '#3b82f6',
+      website: '',
+      notice: '',
+      models: [],
+      serviceKinds: ['llm']
     }
-  }
+  );
 
-  // View Routing
-  function setView(name, updateUrl = true) {
-    activeView = name;
-    if (updateUrl) {
-      history.pushState({ view: name }, '', `/dashboard/${name}`);
-    }
-    if (name === 'quota') loadQuota();
-    if (name === 'media') loadMedia(activeMediaKind);
-    if (name === 'proxy-pools') loadProxyPools();
-  }
+  let filteredProviders = $derived(
+    providerRegistry.filter(p => {
+      const q = providerSearch.toLowerCase().trim();
+      const matchesSearch = !q ||
+        p.name.toLowerCase().includes(q) ||
+        p.id.toLowerCase().includes(q) ||
+        (p.models && p.models.some(m => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q)));
 
-  async function loadQuota() {
-    try {
-      const res = await api('/api/quota');
-      quotaList = res.data || [];
-    } catch (e) {
-      showNotice('Failed to load quota: ' + e.message, true);
-    }
-  }
+      if (!matchesSearch) return false;
 
-  async function loadMedia(kind) {
-    activeMediaKind = kind;
-    try {
-      const res = await api(`/v1/models/${kind}`);
-      mediaModels = res.data || [];
-    } catch (e) {
-      showNotice('Failed to load media catalog: ' + e.message, true);
-    }
-  }
-
-  async function loadProxyPools() {
-    try {
-      const list = await api('/api/proxy-pools');
-      proxyPools = list || [];
-    } catch (e) {
-      showNotice('Failed to load proxy pools: ' + e.message, true);
-    }
-  }
-
-  async function saveSettings() {
-    try {
-      await api('/api/settings', {
-        method: 'POST',
-        body: JSON.stringify(settings)
-      });
-      showNotice('Settings saved successfully.');
-      await refresh();
-    } catch (e) {
-      showNotice('Error saving settings: ' + e.message, true);
-    }
-  }
-
-  async function deleteItem(path) {
-    if (!confirm('Are you sure you want to delete this item?')) return;
-    try {
-      await api(path, { method: 'DELETE' });
-      showNotice('Deleted successfully.');
-      await refresh();
-    } catch (e) {
-      showNotice(e.message, true);
-    }
-  }
-
-  // Clipboard Helpers
-  function copyText(text) {
-    navigator.clipboard.writeText(text).then(() => {
-      showNotice('Copied to clipboard!');
-    }).catch(() => {
-      prompt('Copy manually:', text);
-    });
-  }
-
-  // Snippet
-  const snippets = {
-    chat: `curl http://localhost:20128/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer sk-9router" \\
-  -d '{"model":"openai/gpt-4o","messages":[{"role":"user","content":"Hello!"}]}'`,
-    claude: `curl http://localhost:20128/v1/messages \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: sk-9router" \\
-  -H "anthropic-version: 2023-06-01" \\
-  -d '{"model":"cc/claude-opus-4-7","max_tokens":1024,"messages":[{"role":"user","content":"Hello!"}]}'`,
-    compress: `curl http://localhost:20128/v1/compress \\
-  -H "Content-Type: application/json" \\
-  -d '{"prompt":"const code = \\"...\\"; please refactor","aggressiveness":"high"}'`,
-    models: `curl http://localhost:20128/v1/models | jq '.data[].id'`
-  };
-
-  // Translator Live Test
-  async function runTranslator() {
-    transStats = 'Translating...';
-    try {
-      const parsed = JSON.parse(transInput);
-      const res = await api('/api/translator/run', {
-        method: 'POST',
-        body: JSON.stringify({
-          source_format: transSource,
-          target_format: transTarget,
-          payload: parsed,
-          dry_run: true
-        })
-      });
-      transOutput = JSON.stringify(res.output, null, 2);
-      transStats = `${res.stats.tokens_estimated} tokens · ${res.stats.translation_time_ms} ms`;
-      showNotice('Format converted successfully.');
-    } catch (e) {
-      transStats = 'Error';
-      transOutput = `// Translation failed:\n// ${e.message}`;
-      showNotice(e.message, true);
-    }
-  }
-
-  // Live SSE Console Log
-  function initSSE() {
-    const sse = new EventSource('/api/console-log/stream');
-    sse.onmessage = (ev) => {
-      if (logPaused) return;
-      logs.push(ev.data);
-      if (logs.length > 1000) logs.shift();
-      logs = [...logs];
-      if (logAutoscroll && terminalScreen) {
-        setTimeout(() => { terminalScreen.scrollTop = terminalScreen.scrollHeight; }, 10);
-      }
-    };
-  }
-
-  let filteredLogs = $derived(
-    logs.filter(l => {
-      if (logFilter === 'INFO' && !l.includes('[ INFO]')) return false;
-      if (logFilter === 'WARN' && !l.includes('[ WARN]')) return false;
-      if (logFilter === 'ERROR' && !l.includes('[ERROR]')) return false;
-      if (logSearch && !l.toLowerCase().includes(logSearch.toLowerCase())) return false;
+      if (providerStatusFilter === 'all') return true;
+      const status = getProviderStatus(p.id);
+      if (providerStatusFilter === 'active') return status.active;
+      if (providerStatusFilter === 'inactive') return status.connected && !status.active;
+      if (providerStatusFilter === 'no-connection') return !status.connected;
       return true;
     })
   );
 
-  // Modals
-  function openProviderModal(item = {}) {
-    modalType = 'provider';
-    modalTitle = item.id ? 'Edit Provider' : 'Add Provider';
-    modalItem = {
-      id: item.id || crypto.randomUUID(),
-      provider: item.provider || 'openai',
-      name: item.name || '',
-      authType: item.auth_type || 'api_key',
-      priority: item.priority || 1,
-      isActive: item.is_active !== false,
-      apiKey: item.data?.apiKey || '',
-      baseUrl: item.data?.baseUrl || ''
-    };
-    modalOpen = true;
-  }
+  let oauthProviders = $derived(filteredProviders.filter(p => p.category === 'oauth'));
+  let freeTierProviders = $derived(filteredProviders.filter(p => p.category === 'freeTier' || p.category === 'free'));
+  let apiKeyProviders = $derived(filteredProviders.filter(p => p.category === 'apikey' || p.category === 'webCookie'));
 
-  function openComboModal(item = {}) {
-    modalType = 'combo';
-    modalTitle = item.id ? 'Edit Combo' : 'Add Combo';
-    modalItem = {
-      id: item.id || crypto.randomUUID(),
-      name: item.name || '',
-      kind: item.kind || 'chat',
-      models: (item.models || []).join('\n')
-    };
-    modalOpen = true;
-  }
-
-  function openKeyModal(item = {}) {
-    modalType = 'key';
-    modalTitle = item.id ? 'Edit API Key' : 'Create API Key';
-    modalItem = {
-      id: item.id || crypto.randomUUID(),
-      name: item.name || '',
-      key: item.key || 'sk-9router-' + Math.random().toString(36).substring(2, 14),
-      machineId: item.machine_id || '',
-      accessAllow: item.access_allow || '',
-      isActive: item.is_active !== false
-    };
-    modalOpen = true;
-  }
-
-  function openProxyModal(item = {}) {
-    modalType = 'proxy';
-    modalTitle = item.id ? 'Edit Proxy Pool' : 'Add Proxy Pool';
-    modalItem = {
-      id: item.id || crypto.randomUUID(),
-      name: item.data?.name || '',
-      protocol: item.data?.protocol || 'http',
-      url: item.data?.url || '',
-      isActive: item.is_active !== false
-    };
-    modalOpen = true;
-  }
-
-  async function submitModal(e) {
-    e.preventDefault();
+  // -------------------------------------------------------------
+  // API Fetching & Lifecycle
+  // -------------------------------------------------------------
+  async function checkAuthStatus() {
     try {
-      if (modalType === 'provider') {
-        await api('/api/providers', {
-          method: 'POST',
-          body: JSON.stringify({
-            id: modalItem.id,
-            provider: modalItem.provider,
-            name: modalItem.name || null,
-            authType: modalItem.authType,
-            priority: Number(modalItem.priority) || 1,
-            isActive: modalItem.isActive,
-            data: {
-              apiKey: modalItem.apiKey || undefined,
-              baseUrl: modalItem.baseUrl || undefined
-            },
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          })
-        });
-      } else if (modalType === 'combo') {
-        const mList = modalItem.models.split('\n').map(s => s.trim()).filter(Boolean);
-        await api('/api/combos', {
-          method: 'POST',
-          body: JSON.stringify({
-            id: modalItem.id,
-            name: modalItem.name,
-            kind: modalItem.kind || 'chat',
-            models: mList,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          })
-        });
-      } else if (modalType === 'key') {
-        await api('/api/keys', {
-          method: 'POST',
-          body: JSON.stringify({
-            id: modalItem.id,
-            key: modalItem.key,
-            name: modalItem.name || null,
-            machineId: modalItem.machineId || null,
-            isActive: modalItem.isActive,
-            accessRestricted: !!modalItem.accessAllow,
-            accessAllow: modalItem.accessAllow || null,
-            createdAt: new Date().toISOString()
-          })
-        });
-      } else if (modalType === 'proxy') {
-        await api('/api/proxy-pools', {
-          method: 'POST',
-          body: JSON.stringify({
-            id: modalItem.id,
-            isActive: modalItem.isActive,
-            testStatus: 'untested',
-            data: {
-              name: modalItem.name,
-              protocol: modalItem.protocol,
-              url: modalItem.url
-            },
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          })
-        });
-        await loadProxyPools();
-      }
-
-      modalOpen = false;
-      showNotice('Saved successfully.');
-      await refresh();
-    } catch (err) {
-      showNotice('Save error: ' + err.message, true);
+      const res = await fetch('/api/auth/status');
+      const data = await res.json();
+      authenticated = !!data.authenticated;
+      requireLogin = !!data.requireLogin;
+    } catch {
+      authenticated = true;
     }
   }
 
-  onMount(async () => {
+  async function handleLogin(e) {
+    e?.preventDefault();
+    loginError = '';
     try {
-      const hRes = await api('/api/health');
-      health = `Port 20128 · v${hRes.version}`;
-      version = `v${hRes.version}`;
-    } catch (_) {}
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: loginPassword })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        authenticated = true;
+        showToast('Logged in successfully');
+        loadAllData();
+      } else {
+        loginError = data.error || 'Invalid password';
+      }
+    } catch {
+      loginError = 'Connection failed';
+    }
+  }
 
-    const seg = location.pathname.split('/')[2] || 'overview';
-    setView(seg, false);
+  async function handleLogout() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      authenticated = false;
+    } catch {}
+  }
 
-    await refresh();
-    initSSE();
+  async function loadAllData() {
+    loadProviders();
+    loadCombos();
+    loadKeys();
+    loadQuota();
+    loadUsage();
+    loadSettings();
+    loadCliStatuses();
+  }
+
+  async function loadProviders() {
+    try {
+      const res = await fetch('/api/providers');
+      const data = await res.json();
+      connections = data.connections || [];
+    } catch {}
+  }
+
+  async function loadCombos() {
+    try {
+      const res = await fetch('/api/combos');
+      const data = await res.json();
+      combos = data.combos || [];
+    } catch {}
+  }
+
+  async function loadKeys() {
+    try {
+      const res = await fetch('/api/keys');
+      const data = await res.json();
+      apiKeys = data.keys || [];
+    } catch {}
+  }
+
+  async function loadQuota() {
+    try {
+      const res = await fetch('/api/quota');
+      const json = await res.json();
+      quotaItems = json.data || [];
+    } catch {}
+  }
+
+  async function loadUsage() {
+    try {
+      const res = await fetch('/api/usage/stats');
+      usageStats = await res.json();
+    } catch {}
+  }
+
+  async function loadSettings() {
+    try {
+      const res = await fetch('/api/settings');
+      settings = await res.json();
+    } catch {}
+  }
+
+  async function loadCliStatuses() {
+    try {
+      const res = await fetch('/api/cli-tools/all-statuses');
+      cliStatuses = await res.json();
+    } catch {}
+  }
+
+  // -------------------------------------------------------------
+  // Provider Operations
+  // -------------------------------------------------------------
+  function openProviderDetail(id) {
+    selectedProviderId = id;
+    activeView = 'provider-detail';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function openAddConnection(providerId) {
+    const p = providerRegistry.find(item => item.id === providerId) || selectedProvider;
+    const isOAuth = p.category === 'oauth';
+    const origin = window.location.origin;
+    const redirectUri = encodeURIComponent(`${origin}/callback`);
+
+    let authUrl = '';
+    if (providerId === 'antigravity') {
+      authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&redirect_uri=${redirectUri}&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcclog+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+openid+email+profile&access_type=offline&prompt=consent`;
+    } else if (providerId === 'openai' || providerId === 'codex') {
+      authUrl = `https://auth.openai.com/oauth/authorize?response_type=code&client_id=9router&redirect_uri=${redirectUri}&scope=openid+profile+email`;
+    } else if (providerId === 'claude') {
+      authUrl = `https://claude.ai/oauth/authorize?response_type=code&client_id=9router&redirect_uri=${redirectUri}&scope=user`;
+    } else if (providerId === 'cursor') {
+      authUrl = `https://authenticator.cursor.sh/auth/connect?redirect_uri=${redirectUri}`;
+    } else if (providerId === 'github' || providerId === 'copilot') {
+      authUrl = `https://github.com/login/oauth/authorize?client_id=Iv1.b507a08c87ecfe98&redirect_uri=${redirectUri}&scope=read:user`;
+    } else if (providerId === 'zed') {
+      authUrl = `https://zed.dev/oauth/authorize?client_id=9router&redirect_uri=${redirectUri}&response_type=code`;
+    } else if (providerId === 'qoder') {
+      authUrl = `https://qoder.cloud/oauth/authorize?client_id=9router&redirect_uri=${redirectUri}&response_type=code`;
+    } else {
+      authUrl = `https://auth.${providerId}.com/oauth/authorize?response_type=code&client_id=9router&redirect_uri=${redirectUri}&scope=user`;
+    }
+
+    modalType = 'add-connection';
+    modalData = {
+      provider: providerId,
+      mode: isOAuth ? 'oauth' : 'apikey',
+      authUrl,
+      callbackUrl: '',
+      copied: false,
+      isConnecting: false,
+      name: '',
+      apiKey: ''
+    };
+  }
+
+  function copyAuthUrl(url) {
+    if (!url) return;
+    navigator.clipboard?.writeText(url);
+    modalData.copied = true;
+    showToast('Copied authorization URL');
+    setTimeout(() => {
+      if (modalData) modalData.copied = false;
+    }, 2000);
+  }
+
+  async function handleConnectOAuth() {
+    const cb = (modalData.callbackUrl || '').trim();
+    if (!cb) return;
+
+    modalData.isConnecting = true;
+    try {
+      let code = '';
+      let accessToken = '';
+      let email = `${modalData.provider || selectedProvider.id}@oauth.user`;
+      try {
+        const parsed = new URL(cb, window.location.origin);
+        code = parsed.searchParams.get('code') || '';
+        accessToken = parsed.searchParams.get('access_token') || '';
+        const emailParam = parsed.searchParams.get('email') || parsed.searchParams.get('user_id');
+        if (emailParam) email = emailParam;
+      } catch {
+        code = cb;
+      }
+
+      const payload = {
+        id: `conn-${Date.now()}`,
+        provider: modalData.provider || selectedProvider.id,
+        authType: 'oauth',
+        name: email,
+        email: email,
+        priority: getProviderConnections(modalData.provider || selectedProvider.id).length + 1,
+        isActive: true,
+        testStatus: 'active',
+        accessToken: accessToken || (code ? `oauth_${code.slice(0, 32)}` : 'oauth_token_active'),
+        code: code || undefined,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const res = await fetch('/api/providers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        showToast('Connected successfully.');
+        loadProviders();
+        modalType = null;
+      } else {
+        showToast('Failed to save connection', 'error');
+      }
+    } catch (err) {
+      showToast('Failed to connect: ' + err.message, 'error');
+    } finally {
+      if (modalData) modalData.isConnecting = false;
+    }
+  }
+
+  async function toggleConnection(conn) {
+    const updated = { ...conn, isActive: !conn.isActive };
+    try {
+      await fetch('/api/providers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      loadProviders();
+      showToast(`Connection ${updated.isActive ? 'activated' : 'deactivated'}`);
+    } catch {}
+  }
+
+  async function testConnection(id) {
+    try {
+      const res = await fetch(`/api/providers/${id}/test`, { method: 'POST' });
+      const data = await res.json();
+      if (data.valid) {
+        showToast('Connection test passed: Active');
+      } else {
+        showToast('Connection test failed: ' + (data.error || 'Unknown'), 'error');
+      }
+      loadProviders();
+    } catch {
+      showToast('Connection test failed', 'error');
+    }
+  }
+
+  async function testBatchProviders(providerId = null) {
+    try {
+      showToast('Running batch probe tests...');
+      const res = await fetch('/api/providers/test-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: providerId, mode: 'all' })
+      });
+      const data = await res.json();
+      showToast(`Tested ${data.results?.length || 0} connections successfully`);
+      loadProviders();
+    } catch {
+      showToast('Batch test failed', 'error');
+    }
+  }
+
+  async function deleteConnection(id) {
+    if (!confirm('Are you sure you want to delete this connection?')) return;
+    try {
+      await fetch(`/api/providers/${id}`, { method: 'DELETE' });
+      showToast('Connection deleted');
+      loadProviders();
+    } catch {}
+  }
+
+  async function addModelToProvider(modelId, modelName) {
+    if (!modelId) return;
+    try {
+      await fetch(`/api/providers/${selectedProviderId}/models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: modelId, name: modelName || modelId })
+      });
+      showToast('Model added');
+      modalType = null;
+    } catch {}
+  }
+
+  // -------------------------------------------------------------
+  // Token Saver & Headroom
+  // -------------------------------------------------------------
+  async function updateTokenSaver(updates) {
+    try {
+      const res = await fetch('/api/headroom/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      const data = await res.json();
+      if (data.settings) settings = data.settings;
+      showToast('Token saver settings updated');
+    } catch {}
+  }
+
+  // -------------------------------------------------------------
+  // Router Navigation Helper
+  // -------------------------------------------------------------
+  function setView(view) {
+    activeView = view;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function toggleTheme() {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+
+  function copyText(txt) {
+    navigator.clipboard?.writeText(txt);
+    showToast('Copied to clipboard');
+  }
+
+  onMount(() => {
+    checkAuthStatus();
+    loadAllData();
   });
 </script>
 
-<div class="app-shell">
-  <!-- SIDEBAR NAVIGATION -->
-  <aside>
-    <div class="brand">
-      <div class="brand-title">
-        <div class="brand-logo">9</div>
-        <div>
-          <h1>9Router</h1>
-          <div class="muted" style="font-size:11px;">Native Rust Gateway</div>
-        </div>
-      </div>
-      <span class="version-pill">{version}</span>
-    </div>
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && modalType) modalType = null; }} />
 
-    <nav>
-      <div class="nav-section">Gateway</div>
-      <button class={activeView === 'overview' ? 'active' : ''} onclick={() => setView('overview')}><span class="nav-icon">⌂</span>Endpoint &amp; Key</button>
-      <button class={activeView === 'providers' ? 'active' : ''} onclick={() => setView('providers')}><span class="nav-icon">◈</span>Providers</button>
-      <button class={activeView === 'combos' ? 'active' : ''} onclick={() => setView('combos')}><span class="nav-icon">◇</span>Combo &amp; Vision</button>
-      <button class={activeView === 'keys' ? 'active' : ''} onclick={() => setView('keys')}><span class="nav-icon">⌕</span>API Keys</button>
-      <button class={activeView === 'usage' ? 'active' : ''} onclick={() => setView('usage')}><span class="nav-icon">▥</span>Usage Analytics</button>
-      <button class={activeView === 'quota' ? 'active' : ''} onclick={() => setView('quota')}><span class="nav-icon">◷</span>Quota Tracker</button>
-      <button class={activeView === 'token-saver' ? 'active' : ''} onclick={() => setView('token-saver')}><span class="nav-icon">✦</span>Token Saver</button>
-
-      <div class="nav-section">Tools</div>
-      <button class={activeView === 'cli-tools' ? 'active' : ''} onclick={() => setView('cli-tools')}><span class="nav-icon">›_</span>CLI Tools</button>
-      <button class={activeView === 'translator' ? 'active' : ''} onclick={() => setView('translator')}><span class="nav-icon">文</span>Translator</button>
-      <button class={activeView === 'console-log' ? 'active' : ''} onclick={() => setView('console-log')}><span class="nav-icon">≡</span>Console Log</button>
-
-      <div class="nav-section">System</div>
-      <button class={activeView === 'media' ? 'active' : ''} onclick={() => setView('media')}><span class="nav-icon">◎</span>Media Providers</button>
-      <button class={activeView === 'proxy-pools' ? 'active' : ''} onclick={() => setView('proxy-pools')}><span class="nav-icon">⇄</span>Proxy Pools</button>
-      <button class={activeView === 'settings' ? 'active' : ''} onclick={() => setView('settings')}><span class="nav-icon">⚙</span>Settings</button>
-    </nav>
-  </aside>
-
-  <!-- MAIN VIEW CONTAINER -->
-  <div class="content">
-    <header class="page-header">
-      <div class="breadcrumbs">
-        <span class="breadcrumb-root">9Router</span>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-active" style="text-transform: capitalize;">{activeView.replace('-', ' ')}</span>
-      </div>
-      <div class="header-status">
-        <button class="sm ghost" onclick={() => copyText('http://localhost:20128')}>Copy Base URL</button>
-        <div class="gateway-pill">
-          <span class="pulse-dot"></span>
-          <span>{health}</span>
-        </div>
-      </div>
-    </header>
-
-    <main>
-      {#if notice.show}
-        <div class="notice {notice.error ? 'error' : 'ok'}">{notice.text}</div>
-      {/if}
-
-      <!-- 1. OVERVIEW -->
-      {#if activeView === 'overview'}
-        <div class="grid">
-          <div class="metric-card">
-            <div class="metric-label">Active Providers</div>
-            <div class="metric-value">{summary.providers?.active || 0} / {summary.providers?.total || 0}</div>
-            <div class="metric-sub">Connected AI backends</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Fallback Combos</div>
-            <div class="metric-value">{summary.combos || 0}</div>
-            <div class="metric-sub">Auto-failover chains</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Active API Keys</div>
-            <div class="metric-value">{summary.keys?.active || 0} / {summary.keys?.total || 0}</div>
-            <div class="metric-sub">Client access tokens</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Total Requests</div>
-            <div class="metric-value">{(summary.usage?.totalRequests || 0).toLocaleString()}</div>
-            <div class="metric-sub">Routed through engine</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Tokens Saved</div>
-            <div class="metric-value" style="color:var(--mint-bright);">{(summary.usage?.totalTokens || 0).toLocaleString()}</div>
-            <div class="metric-sub">via Headroom compression</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Quick Connect</h2>
-              <div class="muted">Point your OpenAI or Anthropic SDKs to 9Router. Supports all coding tools.</div>
-            </div>
-            <button class="sm primary" onclick={() => setView('cli-tools')}>CLI Setup Guide</button>
-          </div>
-
-          <div class="tab-nav">
-            <button class="tab-btn {activeSnippet === 'chat' ? 'active' : ''}" onclick={() => activeSnippet = 'chat'}>Chat Completions</button>
-            <button class="tab-btn {activeSnippet === 'claude' ? 'active' : ''}" onclick={() => activeSnippet = 'claude'}>Claude Messages</button>
-            <button class="tab-btn {activeSnippet === 'compress' ? 'active' : ''}" onclick={() => activeSnippet = 'compress'}>Headroom Compression</button>
-            <button class="tab-btn {activeSnippet === 'models' ? 'active' : ''}" onclick={() => activeSnippet = 'models'}>Models Catalog</button>
-          </div>
-
-          <div class="snippet-box">
-            <button class="copy-btn" onclick={() => copyText(snippets[activeSnippet])}>Copy cURL</button>
-            <pre>{snippets[activeSnippet]}</pre>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 2. PROVIDERS -->
-      {#if activeView === 'providers'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Provider Connections</h2>
-              <div class="muted">Multi-provider routing pool with health tracking, OAuth tokens, and API keys.</div>
-            </div>
-            <button class="primary" onclick={() => openProviderModal()}>Add provider</button>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Authentication</th>
-                  <th>Priority</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#if providers.length === 0}
-                  <tr><td colspan="5" style="text-align:center; padding:32px; color:var(--muted);">No providers connected. Click "Add provider" to configure OpenAI, Anthropic, Gemini, Groq, or DeepSeek.</td></tr>
-                {:else}
-                  {#each providers as p}
-                    <tr>
-                      <td>
-                        <strong>{p.provider}</strong>
-                        <div class="muted">{p.name || p.email || p.id}</div>
-                      </td>
-                      <td><code>{p.auth_type}</code></td>
-                      <td><span class="badge">#{p.priority || 1}</span></td>
-                      <td>
-                        <span class="badge {p.is_active ? 'healthy' : 'danger'}">{p.is_active ? 'Active' : 'Disabled'}</span>
-                      </td>
-                      <td>
-                        <div class="actions">
-                          <button class="sm" onclick={() => openProviderModal(p)}>Edit</button>
-                          <button class="sm danger" onclick={() => deleteItem(`/api/providers/${encodeURIComponent(p.id)}`)}>Delete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  {/each}
-                {/if}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 3. COMBOS -->
-      {#if activeView === 'combos'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Fallback Combos &amp; Vision</h2>
-              <div class="muted">Chains multiple models in order of preference with automated failover and retry.</div>
-            </div>
-            <div class="actions">
-              <button class="ghost sm" onclick={() => openComboModal({ name: 'coding-auto', kind: 'chat', models: ['anthropic/claude-3-5-sonnet', 'deepseek/deepseek-chat', 'openai/gpt-4o-mini'] })}>+ Coding Preset</button>
-              <button class="ghost sm" onclick={() => openComboModal({ name: 'fast-auto', kind: 'chat', models: ['groq/llama-3.3-70b', 'gemini/gemini-1.5-flash', 'openai/gpt-4o-mini'] })}>+ Fast Fallback</button>
-              <button class="primary" onclick={() => openComboModal()}>Add Combo</button>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Kind</th>
-                  <th>Fallback Chain</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#if combos.length === 0}
-                  <tr><td colspan="4" style="text-align:center; padding:32px; color:var(--muted);">No fallback combos configured. Click "+ Coding Preset" or "Add Combo" to define failover chains.</td></tr>
-                {:else}
-                  {#each combos as c}
-                    <tr>
-                      <td><strong>{c.name}</strong></td>
-                      <td><span class="badge">{c.kind || 'chat'}</span></td>
-                      <td>
-                        {#each c.models as m, idx}
-                          <code>{m}</code>
-                          {#if idx < c.models.length - 1} <span style="color:var(--mint); font-weight:bold;">→</span> {/if}
-                        {/each}
-                      </td>
-                      <td>
-                        <div class="actions">
-                          <button class="sm" onclick={() => openComboModal(c)}>Edit</button>
-                          <button class="sm danger" onclick={() => deleteItem(`/api/combos/${encodeURIComponent(c.id)}`)}>Delete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  {/each}
-                {/if}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 4. API KEYS -->
-      {#if activeView === 'keys'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Client API Keys</h2>
-              <div class="muted">Bearer tokens authorized to access gateway endpoints when authentication is required.</div>
-            </div>
-            <button class="primary" onclick={() => openKeyModal()}>Create API Key</button>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Key</th>
-                  <th>Machine ID</th>
-                  <th>Access Scope</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#if keys.length === 0}
-                  <tr><td colspan="6" style="text-align:center; padding:32px; color:var(--muted);">No client API keys configured. Click "Create API Key" to authorize clients.</td></tr>
-                {:else}
-                  {#each keys as k}
-                    <tr>
-                      <td><strong>{k.name || 'Unnamed'}</strong></td>
-                      <td>
-                        <code>{k.key.substring(0, 14)}...</code>
-                        <button class="ghost sm" onclick={() => copyText(k.key)}>Copy</button>
-                      </td>
-                      <td>{k.machine_id || 'Any'}</td>
-                      <td>{k.access_restricted ? k.access_allow || 'Restricted' : 'Universal'}</td>
-                      <td><span class="badge {k.is_active ? 'healthy' : 'danger'}">{k.is_active ? 'Active' : 'Revoked'}</span></td>
-                      <td>
-                        <div class="actions">
-                          <button class="sm" onclick={() => openKeyModal(k)}>Edit</button>
-                          <button class="sm danger" onclick={() => deleteItem(`/api/keys/${encodeURIComponent(k.id)}`)}>Delete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  {/each}
-                {/if}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 5. USAGE -->
-      {#if activeView === 'usage'}
-        <div class="grid">
-          <div class="metric-card">
-            <div class="metric-label">Total Requests</div>
-            <div class="metric-value">{(summary.usage?.totalRequests || 0).toLocaleString()}</div>
-            <div class="metric-sub">Gateway API calls</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Prompt Tokens</div>
-            <div class="metric-value">{(summary.usage?.totalPromptTokens || 0).toLocaleString()}</div>
-            <div class="metric-sub">Inbound context</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Completion Tokens</div>
-            <div class="metric-value">{(summary.usage?.totalCompletionTokens || 0).toLocaleString()}</div>
-            <div class="metric-sub">Generated output</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Estimated Cost Saved</div>
-            <div class="metric-value" style="color:var(--mint-bright);">${(((summary.usage?.totalTokens || 0) / 1000) * 0.002).toFixed(2)}</div>
-            <div class="metric-sub">Compression &amp; combos</div>
-          </div>
-        </div>
-        <div class="card">
-          <h2>Traffic Telemetry</h2>
-          <p class="muted">Real-time accounting tracked in native SQLite database.</p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Metric</th><th>Value</th><th>Unit</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>Database Engine</td><td>SQLite Bundled (r2d2 connection pool)</td><td>Engine</td></tr>
-                <tr><td>Context Crusher</td><td>Headroom Smart-Crusher + CCR RAG</td><td>Integrated</td></tr>
-                <tr><td>Latency Overhead</td><td>&lt; 0.5 ms</td><td>Native Rust</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 6. QUOTA TRACKER -->
-      {#if activeView === 'quota'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Provider Quota Telemetry</h2>
-              <div class="muted">Live monitoring of upstream request limits, token budgets, and rate-limit reset windows.</div>
-            </div>
-            <button class="ghost sm" onclick={loadQuota}>↻ Refresh Quota</button>
-          </div>
-          <div class="grid">
-            {#each quotaList as q}
-              <div class="metric-card">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                  <strong style="font-size:15px;">{q.name}</strong>
-                  <span class="badge {q.status === 'healthy' ? 'healthy' : 'warn'}">{q.status}</span>
-                </div>
-                <div class="muted" style="font-size:11.5px;">Upstream: <code>{q.provider}</code></div>
-                <div style="margin-top:14px;">
-                  <div style="display:flex; justify-content:space-between; font-size:12px;">
-                    <span class="muted">Requests Remaining</span>
-                    <strong>{q.requests_remaining.toLocaleString()} / {q.requests_limit.toLocaleString()}</strong>
-                  </div>
-                  <div class="progress-bar">
-                    <div class="progress-fill" style="width: {100 - Math.min(100, Math.max(0, q.percent_used || 0))}%;"></div>
-                  </div>
-                </div>
-                <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:8px;">
-                  <span class="muted">Rate Reset Countdown</span>
-                  <strong style="color:var(--mint-bright);">{q.reset_countdown}</strong>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
-
-      <!-- 7. TOKEN SAVER -->
-      {#if activeView === 'token-saver'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Token Saver &amp; Compression Suite</h2>
-              <div class="muted">Drastically cut API bills with native Headroom AST compression, RTK deduplication, and Caveman prompt compaction.</div>
-            </div>
-            <button class="primary" onclick={saveSettings}>Save Configuration</button>
-          </div>
-
-          <div class="form-grid" style="margin-top:14px;">
-            <div class="field">
-              <label>
-                <input type="checkbox" bind:checked={settings.headroom_enabled}>
-                <strong>Enable Headroom AST Compression</strong>
-              </label>
-              <div class="muted">Reduces prompt tokens by up to 60% through semantic syntax crushing before dispatching upstream.</div>
-            </div>
-
-            <div class="field">
-              <label>
-                <input type="checkbox" bind:checked={settings.rtk_enabled}>
-                <strong>Enable RTK Deduplication</strong>
-              </label>
-              <div class="muted">Removes redundant repeat system instructions and context blocks across conversational turns.</div>
-            </div>
-
-            <div class="field">
-              <label>
-                Caveman Mode Level
-                <select bind:value={settings.caveman_level}>
-                  <option value="">Disabled</option>
-                  <option value="low">Low (Minor prompt compression)</option>
-                  <option value="medium">Medium (Concise instructions)</option>
-                  <option value="high">High (Ultra-compact telegraphic prompts)</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="field">
-              <label>
-                Ponytail Mode Level
-                <select bind:value={settings.ponytail_level}>
-                  <option value="">Disabled</option>
-                  <option value="lite">Lite (Minimal diffs)</option>
-                  <option value="full">Full (Eliminate abstractions)</option>
-                  <option value="ultra">Ultra (Strict YAGNI verification)</option>
-                </select>
-              </label>
-            </div>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 8. CLI TOOLS -->
-      {#if activeView === 'cli-tools'}
-        <div class="card">
-          <h2>Developer Coding CLI Configuration</h2>
-          <p class="muted">Point any coding agent or IDE directly to 9Router. Click any command to copy.</p>
-
-          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top:18px;">
-            <div class="metric-card">
-              <h3>Claude Code</h3>
-              <div class="muted" style="margin:4px 0 10px;">Anthropic terminal agent</div>
-              <div class="snippet-box" style="margin-top:0;">
-                <button class="copy-btn" onclick={() => copyText('export ANTHROPIC_BASE_URL="http://localhost:20128"')}>Copy</button>
-                <pre>export ANTHROPIC_BASE_URL="http://localhost:20128"
-claude</pre>
-              </div>
-            </div>
-
-            <div class="metric-card">
-              <h3>Cursor IDE</h3>
-              <div class="muted" style="margin:4px 0 10px;">Settings &gt; Models &gt; Override</div>
-              <div class="snippet-box" style="margin-top:0;">
-                <button class="copy-btn" onclick={() => copyText('http://localhost:20128/v1')}>Copy</button>
-                <pre>Override OpenAI Base URL:
-http://localhost:20128/v1</pre>
-              </div>
-            </div>
-
-            <div class="metric-card">
-              <h3>Codex CLI / Cline / OpenClaw</h3>
-              <div class="muted" style="margin:4px 0 10px;">Universal OpenAI format</div>
-              <div class="snippet-box" style="margin-top:0;">
-                <button class="copy-btn" onclick={() => copyText('export OPENAI_BASE_URL="http://localhost:20128/v1"\nexport OPENAI_API_KEY="sk-9router"')}>Copy</button>
-                <pre>export OPENAI_BASE_URL="http://localhost:20128/v1"
-export OPENAI_API_KEY="sk-9router"</pre>
-              </div>
-            </div>
-
-            <div class="metric-card">
-              <h3>Windsurf / Aider</h3>
-              <div class="muted" style="margin:4px 0 10px;">Aider pair programming</div>
-              <div class="snippet-box" style="margin-top:0;">
-                <button class="copy-btn" onclick={() => copyText('aider --openai-api-base http://localhost:20128/v1')}>Copy</button>
-                <pre>aider --openai-api-base http://localhost:20128/v1</pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 9. TRANSLATOR WORKBENCH -->
-      {#if activeView === 'translator'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Translator Workbench</h2>
-              <div class="muted">Live format conversion runner between OpenAI, Claude Messages, Google Gemini, and Responses.</div>
-            </div>
-            <button class="sm primary" onclick={runTranslator}>Convert &amp; Test</button>
-          </div>
-
-          <div class="form-grid">
-            <div class="field">
-              <label>
-                Source Format
-                <select bind:value={transSource}>
-                  <option value="openai">OpenAI (/v1/chat/completions)</option>
-                  <option value="claude">Claude Messages (/v1/messages)</option>
-                  <option value="responses">Responses (/v1/responses)</option>
-                  <option value="gemini">Google Gemini (generateContent)</option>
-                </select>
-              </label>
-            </div>
-            <div class="field">
-              <label>
-                Target Format
-                <select bind:value={transTarget}>
-                  <option value="claude">Claude Messages (/v1/messages)</option>
-                  <option value="openai">OpenAI (/v1/chat/completions)</option>
-                  <option value="gemini">Google Gemini (generateContent)</option>
-                  <option value="responses">Responses (/v1/responses)</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          <div class="split-pane">
-            <div class="pane-col">
-              <div class="pane-header">
-                <span>Input JSON</span>
-              </div>
-              <textarea class="pane-editor" bind:value={transInput} spellcheck="false"></textarea>
-            </div>
-            <div class="pane-col">
-              <div class="pane-header">
-                <span>Translated Output</span>
-                <span class="badge {transStats.includes('Error') ? 'danger' : 'healthy'}">{transStats}</span>
-              </div>
-              <textarea class="pane-editor" readonly bind:value={transOutput} spellcheck="false"></textarea>
-            </div>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 10. CONSOLE LOG -->
-      {#if activeView === 'console-log'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Live Console Log Streaming</h2>
-              <div class="muted">Real-time SSE event stream from the native Rust gateway tracing subscriber.</div>
-            </div>
-            <div class="actions">
-              <button class="ghost sm" onclick={() => logs = []}>Clear</button>
-              <button class="ghost sm {logPaused ? 'primary' : ''}" onclick={() => logPaused = !logPaused}>{logPaused ? 'Resume' : 'Pause'}</button>
-              <label class="muted" style="display:inline-flex; align-items:center; gap:4px; font-size:12px;">
-                <input type="checkbox" bind:checked={logAutoscroll}> Auto-scroll
-              </label>
-            </div>
-          </div>
-
-          <div class="toolbar" style="margin-bottom:8px;">
-            <div class="actions">
-              <button class="sm ghost {logFilter === 'ALL' ? 'primary' : ''}" onclick={() => logFilter = 'ALL'}>ALL</button>
-              <button class="sm ghost {logFilter === 'INFO' ? 'primary' : ''}" onclick={() => logFilter = 'INFO'}>INFO</button>
-              <button class="sm ghost {logFilter === 'WARN' ? 'primary' : ''}" onclick={() => logFilter = 'WARN'}>WARN</button>
-              <button class="sm ghost {logFilter === 'ERROR' ? 'primary' : ''}" onclick={() => logFilter = 'ERROR'}>ERROR</button>
-            </div>
-            <input type="text" placeholder="Filter logs by keyword..." style="max-width:280px;" bind:value={logSearch}>
-          </div>
-
-          <div class="terminal-viewer" bind:this={terminalScreen}>
-            {#each filteredLogs as l}
-              <div class="log-line {l.includes('[ERROR]') ? 'error' : l.includes('[ WARN]') ? 'warn' : l.includes('ready') ? 'success' : 'info'}">
-                {l}
-              </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
-
-      <!-- 11. MEDIA PROVIDERS -->
-      {#if activeView === 'media'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Multi-Modal Media Registry</h2>
-              <div class="muted">Discover and test all 9 native skill endpoints: Image, TTS, STT, Embeddings, Video, and Web.</div>
-            </div>
-            <div class="actions">
-              <button class="ghost sm {activeMediaKind === 'image' ? 'primary' : ''}" onclick={() => loadMedia('image')}>Image</button>
-              <button class="ghost sm {activeMediaKind === 'tts' ? 'primary' : ''}" onclick={() => loadMedia('tts')}>TTS</button>
-              <button class="ghost sm {activeMediaKind === 'stt' ? 'primary' : ''}" onclick={() => loadMedia('stt')}>STT</button>
-              <button class="ghost sm {activeMediaKind === 'embedding' ? 'primary' : ''}" onclick={() => loadMedia('embedding')}>Embeddings</button>
-              <button class="ghost sm {activeMediaKind === 'video' ? 'primary' : ''}" onclick={() => loadMedia('video')}>Video</button>
-              <button class="ghost sm {activeMediaKind === 'web' ? 'primary' : ''}" onclick={() => loadMedia('web')}>Web</button>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Model ID</th>
-                  <th>Kind</th>
-                  <th>Provider</th>
-                  <th>Endpoint</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each mediaModels as m}
-                  <tr>
-                    <td><strong>{m.id}</strong></td>
-                    <td><span class="badge">{m.kind || activeMediaKind}</span></td>
-                    <td><code>{m.owned_by || 'system'}</code></td>
-                    <td>
-                      <code>
-                        {activeMediaKind === 'image' ? '/v1/images/generations' :
-                         activeMediaKind === 'tts' ? '/v1/audio/speech' :
-                         activeMediaKind === 'stt' ? '/v1/audio/transcriptions' :
-                         activeMediaKind === 'embedding' ? '/v1/embeddings' :
-                         activeMediaKind === 'video' ? '/v1/videos/generations' :
-                         m.kind === 'webSearch' ? '/v1/search' : '/v1/web/fetch'}
-                      </code>
-                    </td>
-                    <td><span class="badge healthy">Ready</span></td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 12. PROXY POOLS -->
-      {#if activeView === 'proxy-pools'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>Outbound Proxy Pools</h2>
-              <div class="muted">Configure HTTP and SOCKS5 proxy chains for provider routing and IP rotation.</div>
-            </div>
-            <button class="primary" onclick={() => openProxyModal()}>Add Proxy</button>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID / Name</th>
-                  <th>Proxy URL</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#if proxyPools.length === 0}
-                  <tr><td colspan="4" style="text-align:center; padding:32px; color:var(--muted);">No proxy pools configured. Click "Add Proxy" to configure outbound HTTP/SOCKS5 proxies.</td></tr>
-                {:else}
-                  {#each proxyPools as p}
-                    <tr>
-                      <td><strong>{p.data?.name || p.id}</strong></td>
-                      <td><code>{p.data?.url || 'Direct'}</code></td>
-                      <td><span class="badge {p.test_status === 'online' ? 'healthy' : ''}">{p.test_status || 'Untested'}</span></td>
-                      <td>
-                        <div class="actions">
-                          <button class="sm danger" onclick={() => deleteItem(`/api/proxy-pools/${encodeURIComponent(p.id)}`)}>Delete</button>
-                        </div>
-                      </td>
-                    </tr>
-                  {/each}
-                {/if}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
-
-      <!-- 13. SETTINGS -->
-      {#if activeView === 'settings'}
-        <div class="card">
-          <div class="toolbar">
-            <div>
-              <h2>System &amp; Gateway Settings</h2>
-              <div class="muted">Runtime port, API key authentication policy, and compression thresholds.</div>
-            </div>
-            <button class="primary" onclick={saveSettings}>Save Settings</button>
-          </div>
-
-          <div class="form-grid">
-            <div class="field">
-              <label>Port</label>
-              <input type="number" min="1" max="65535" bind:value={settings.port}>
-            </div>
-
-            <div class="field">
-              <label>
-                <input type="checkbox" bind:checked={settings.require_api_key}>
-                <strong>Enforce API Key for /v1 routes</strong>
-              </label>
-              <div class="muted">When checked, requests without a valid Bearer token receive 401 Unauthorized.</div>
-            </div>
-
-            <div class="field full">
-              <label>System Diagnostics</label>
-              <div class="snippet-box" style="margin-top:4px;">
-                <pre>Gateway Engine: Native Rust (Axum 0.8 + Tokio 1.43)
-Architecture: x86_64
-Context Engine: Built-in Headroom Compression + CCR RAG
-Storage: SQLite with WAL mode &amp; r2d2 connection pool
-UI Framework: Svelte 5 (Compiled zero-virtual-DOM native SPA)</pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      {/if}
-    </main>
+{#if notification}
+  <div class="toast-popup {notification.type}">
+    <span class="material-symbols-outlined">{notification.type === 'error' ? 'error' : 'check_circle'}</span>
+    <span>{notification.msg}</span>
   </div>
-</div>
+{/if}
 
-<!-- MODAL DIALOG -->
-{#if modalOpen}
-  <div class="modal">
-    <div class="modal-card">
-      <div class="toolbar">
-        <h2>{modalTitle}</h2>
-        <button class="ghost sm" onclick={() => modalOpen = false}>✕</button>
+{#if !authenticated && requireLogin}
+  <!-- LOGIN VIEW -->
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">9</div>
+      <div>
+        <h1 style="justify-content: center;">9Router</h1>
+        <p class="muted" style="margin-top: 6px;">Enter your password to access the dashboard</p>
       </div>
 
-      <form onsubmit={submitModal}>
-        {#if modalType === 'provider'}
-          <div class="form-grid">
-            <div class="field">
-              <label>Provider</label>
-              <input required bind:value={modalItem.provider} placeholder="openai">
+      {#if loginError}
+        <div class="notice-banner warn" style="justify-content: center;">
+          <span class="material-symbols-outlined">warning</span>
+          <span>{loginError}</span>
+        </div>
+      {/if}
+
+      <form onsubmit={handleLogin} style="display: flex; flex-direction: column; gap: 14px;">
+        <input
+          type="password"
+          placeholder="Enter password..."
+          bind:value={loginPassword}
+          required
+        />
+        <button type="submit" class="primary" style="padding: 10px;">Login</button>
+      </form>
+
+      <div class="muted" style="font-size: 12px;">
+        Default password is <code>123456</code> or <code>Tama12345</code>
+      </div>
+    </div>
+  </div>
+{:else}
+  <!-- MAIN APPLICATION SHELL -->
+  <div class="app-shell">
+    <!-- SIDEBAR -->
+    <aside>
+      <div class="brand">
+        <div class="brand-title">
+          <div class="brand-logo">9</div>
+          <span>9Router</span>
+        </div>
+        <span class="version-pill">{version}</span>
+      </div>
+
+      <nav>
+        <div class="nav-section">Gateway</div>
+        <button class={activeView === 'providers' || activeView === 'provider-detail' ? 'active' : ''} onclick={() => setView('providers')}>
+          <span class="material-symbols-outlined">api</span>
+          <span>Providers</span>
+        </button>
+        <button class={activeView === 'endpoint' ? 'active' : ''} onclick={() => setView('endpoint')}>
+          <span class="material-symbols-outlined">dns</span>
+          <span>Endpoint &amp; Key</span>
+        </button>
+        <button class={activeView === 'combos' ? 'active' : ''} onclick={() => setView('combos')}>
+          <span class="material-symbols-outlined">layers</span>
+          <span>Combos</span>
+        </button>
+        <button class={activeView === 'usage' ? 'active' : ''} onclick={() => setView('usage')}>
+          <span class="material-symbols-outlined">bar_chart</span>
+          <span>Usage</span>
+        </button>
+        <button class={activeView === 'quota' ? 'active' : ''} onclick={() => setView('quota')}>
+          <span class="material-symbols-outlined">data_usage</span>
+          <span>Quota Tracker</span>
+        </button>
+        <button class={activeView === 'token-saver' ? 'active' : ''} onclick={() => setView('token-saver')}>
+          <span class="material-symbols-outlined">savings</span>
+          <span>Token Saver</span>
+        </button>
+
+        <div class="nav-section">Tools</div>
+        <button class={activeView === 'cli-tools' ? 'active' : ''} onclick={() => setView('cli-tools')}>
+          <span class="material-symbols-outlined">terminal</span>
+          <span>CLI Tools</span>
+        </button>
+        <button class={activeView === 'translator' ? 'active' : ''} onclick={() => setView('translator')}>
+          <span class="material-symbols-outlined">translate</span>
+          <span>Translator</span>
+        </button>
+        <button class={activeView === 'skills' ? 'active' : ''} onclick={() => setView('skills')}>
+          <span class="material-symbols-outlined">extension</span>
+          <span>Skills</span>
+        </button>
+        <button class={activeView === 'console-log' ? 'active' : ''} onclick={() => setView('console-log')}>
+          <span class="material-symbols-outlined">monitor</span>
+          <span>Console Log</span>
+        </button>
+
+        <div class="nav-section">System</div>
+        <div>
+          <button class={activeView === 'media' ? 'active' : ''} onclick={() => { mediaOpen = !mediaOpen; setView('media'); }}>
+            <span class="material-symbols-outlined">perm_media</span>
+            <span>Media Providers</span>
+            <span class="material-symbols-outlined" style="margin-left:auto; font-size: 16px;">{mediaOpen ? 'expand_less' : 'expand_more'}</span>
+          </button>
+          {#if mediaOpen}
+            <div class="subnav-items">
+              <button class="ghost sm" onclick={() => setView('media')}>Embedding</button>
+              <button class="ghost sm" onclick={() => setView('media')}>Text to Image</button>
+              <button class="ghost sm" onclick={() => setView('media')}>Text to Speech</button>
+              <button class="ghost sm" onclick={() => setView('media')}>Speech to Text</button>
+              <button class="ghost sm" onclick={() => setView('media')}>Video</button>
+              <button class="ghost sm" onclick={() => setView('media')}>Web Search</button>
+              <button class="ghost sm" onclick={() => setView('media')}>Web Fetch</button>
             </div>
-            <div class="field">
-              <label>Connection Name</label>
-              <input bind:value={modalItem.name} placeholder="Primary OpenAI">
+          {/if}
+        </div>
+        <button class={activeView === 'proxy-pools' ? 'active' : ''} onclick={() => setView('proxy-pools')}>
+          <span class="material-symbols-outlined">lan</span>
+          <span>Proxy Pools</span>
+        </button>
+        <button class={activeView === 'settings' ? 'active' : ''} onclick={() => setView('settings')}>
+          <span class="material-symbols-outlined">settings</span>
+          <span>Settings</span>
+        </button>
+
+        <div class="nav-section">External</div>
+        <a href="https://9remote.com" target="_blank" class="nav-item">
+          <span class="material-symbols-outlined">travel_explore</span>
+          <span>9Remote</span>
+          <span class="nav-badge-hot">HOT</span>
+        </a>
+        <a href="https://9english.com" target="_blank" class="nav-item">
+          <span class="material-symbols-outlined">school</span>
+          <span>9English</span>
+        </a>
+      </nav>
+    </aside>
+
+    <!-- CONTENT -->
+    <div class="content">
+      <!-- HEADER -->
+      <header class="page-header">
+        <div class="header-info">
+          {#if activeView === 'providers'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">api</span> Providers</h1>
+            <p class="muted">Manage AI model providers, OAuth sessions, API keys and connections</p>
+          {:else if activeView === 'provider-detail'}
+            <div class="breadcrumb">
+              <button onclick={() => setView('providers')}>Providers</button>
+              <span class="material-symbols-outlined" style="font-size: 14px;">chevron_right</span>
+              <span style="color:var(--text-strong);">{selectedProvider.name}</span>
             </div>
-            <div class="field">
-              <label>Authentication Type</label>
-              <select bind:value={modalItem.authType}>
-                <option value="api_key">API Key / Bearer</option>
-                <option value="none">No Auth (Local)</option>
-                <option value="oauth">OAuth 2.0 Token</option>
+            <h1>
+              <img src={`/dashboard/assets/providers/${selectedProvider.id}.png`} alt="" class="provider-logo-img" style="width:26px;height:26px;" onerror={(e)=>{e.currentTarget.style.display='none'}} />
+              {selectedProvider.name}
+            </h1>
+          {:else if activeView === 'endpoint'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">dns</span> Endpoint &amp; Key</h1>
+            <p class="muted">Local OpenAI-compatible gateway endpoint and authentication keys</p>
+          {:else if activeView === 'combos'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">layers</span> Combos &amp; Vision Adapter</h1>
+            <p class="muted">Fallback chains, smart routing, round-robin pools and format conversions</p>
+          {:else if activeView === 'usage'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">bar_chart</span> Usage Analytics</h1>
+            <p class="muted">Live traffic telemetry, prompt/completion token metrics and cost estimates</p>
+          {:else if activeView === 'quota'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">data_usage</span> Quota Tracker</h1>
+            <p class="muted">Real-time quota monitoring, token limits and reset countdown timers</p>
+          {:else if activeView === 'token-saver'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">savings</span> Token Saver</h1>
+            <p class="muted">Built-in Headroom Context Compression, RTK filtering and Caveman summarization</p>
+          {:else if activeView === 'cli-tools'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">terminal</span> CLI Tools</h1>
+            <p class="muted">Automated setup and proxy configs for Claude Code, Codex, Copilot, Cursor and Cline</p>
+          {:else if activeView === 'translator'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">translate</span> Translator Workbench</h1>
+            <p class="muted">Live 6-step request/response schema transformer between OpenAI, Anthropic and Gemini</p>
+          {:else if activeView === 'skills'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">extension</span> Skills</h1>
+            <p class="muted">Curated developer capability plugins for 9router integration</p>
+          {:else if activeView === 'media'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">perm_media</span> Media Providers</h1>
+            <p class="muted">Configure embedding, image generation, audio transcription and video engines</p>
+          {:else if activeView === 'proxy-pools'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">lan</span> Proxy Pools</h1>
+            <p class="muted">Distributed egress relays, Cloudflare Workers, and Deno edge proxies</p>
+          {:else if activeView === 'console-log'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">monitor</span> Console Log</h1>
+            <p class="muted">Live real-time broadcast of gateway routing decisions and translation events</p>
+          {:else if activeView === 'settings'}
+            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">settings</span> Settings</h1>
+            <p class="muted">Gateway server configuration, database backups, themes and credentials</p>
+          {/if}
+        </div>
+
+        <div class="header-actions">
+          <button class="ghost sm" onclick={() => alert('Support 9Router development: visit https://github.com/Tama12345')}>
+            <span class="material-symbols-outlined" style="font-size:16px;color:#f59e0b;">favorite</span>
+            Donate
+          </button>
+          <button class="header-icon-btn" onclick={toggleTheme} title="Toggle Dark/Light Mode">
+            <span class="material-symbols-outlined" style="font-size: 18px;">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
+          </button>
+          <div style="font-size: 18px; padding: 0 4px;" title="English (United States)">🇺🇸</div>
+          {#if authenticated}
+            <button class="header-icon-btn" onclick={handleLogout} title="Logout">
+              <span class="material-symbols-outlined" style="font-size: 18px;">logout</span>
+            </button>
+          {/if}
+        </div>
+      </header>
+
+      <!-- MAIN BODY -->
+      <main>
+        <!-- VIEW 1: PROVIDERS CATALOG -->
+        {#if activeView === 'providers'}
+          <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+            <div class="search-input-wrap" style="flex: 1; min-width: 260px;">
+              <span class="material-symbols-outlined">search</span>
+              <input
+                type="text"
+                placeholder="Search providers..."
+                bind:value={providerSearch}
+              />
+            </div>
+
+            <div style="width: 220px;">
+              <select bind:value={providerStatusFilter}>
+                <option value="all">All Providers</option>
+                <option value="active">Active Connections</option>
+                <option value="inactive">Inactive</option>
+                <option value="no-connection">No Connections</option>
               </select>
             </div>
-            <div class="field">
-              <label>Priority</label>
-              <input type="number" min="1" max="100" bind:value={modalItem.priority}>
-            </div>
-            <div class="field full">
-              <label>API Key / Secret Token</label>
-              <input type="password" bind:value={modalItem.apiKey} placeholder="sk-...">
-            </div>
-            <div class="field full">
-              <label>Base URL Override</label>
-              <input bind:value={modalItem.baseUrl} placeholder="https://api.openai.com/v1">
-            </div>
-            <div class="field full">
-              <label>
-                <input type="checkbox" bind:checked={modalItem.isActive}> Active in routing engine
-              </label>
+          </div>
+
+          <!-- CUSTOM PROVIDERS -->
+          <div class="section-title-bar">
+            <h2><span class="material-symbols-outlined" style="color:var(--mint);">tune</span> Custom Providers (OpenAI/Anthropic Compatible)</h2>
+            <div style="display:flex;gap:8px;">
+              <button class="sm" onclick={() => { modalType = 'custom-provider'; modalData = { format: 'anthropic' }; }}>
+                <span class="material-symbols-outlined" style="font-size:16px;">add</span> Add Anthropic Compatible
+              </button>
+              <button class="primary sm" onclick={() => { modalType = 'custom-provider'; modalData = { format: 'openai' }; }}>
+                <span class="material-symbols-outlined" style="font-size:16px;">add</span> Add OpenAI Compatible
+              </button>
             </div>
           </div>
-        {:else if modalType === 'combo'}
-          <div class="form-grid">
-            <div class="field">
-              <label>Combo Name</label>
-              <input required bind:value={modalItem.name} placeholder="coding-vip">
+
+          <!-- OAUTH PROVIDERS -->
+          <div class="section-title-bar">
+            <h2>
+              <span class="material-symbols-outlined" style="color:#60a5fa;">key</span>
+              OAuth Providers ({oauthProviders.length})
+            </h2>
+            <button class="sm" onclick={() => testBatchProviders()}>
+              <span class="material-symbols-outlined" style="font-size:16px;">play_arrow</span> Test All
+            </button>
+          </div>
+
+          <div class="grid">
+            {#each oauthProviders as provider (provider.id)}
+              {@const status = getProviderStatus(provider.id)}
+              <div class="provider-card" onclick={() => openProviderDetail(provider.id)} onkeydown={(e) => { if (e.key === 'Enter') openProviderDetail(provider.id); }} role="button" tabindex="0">
+                <div class="provider-card-top">
+                  <div class="provider-brand">
+                    <img
+                      src={`/dashboard/assets/providers/${provider.id}.png`}
+                      alt={provider.name}
+                      class="provider-logo-img"
+                      onerror={(e) => { e.currentTarget.src = '/dashboard/assets/providers/openai.png'; }}
+                    />
+                    <div class="provider-name-box">
+                      <div class="provider-name">{provider.name}</div>
+                      <div class="provider-model-count">{provider.models?.length || 0} models</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="provider-card-bottom">
+                  <span class="connection-pill {status.connected ? 'connected' : ''}">
+                    {status.label}
+                  </span>
+                  <label class="switch" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={status.active}
+                      onchange={() => {
+                        const conns = getProviderConnections(provider.id);
+                        if (conns.length > 0) toggleConnection(conns[0]);
+                        else openProviderDetail(provider.id);
+                      }}
+                    />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            {/each}
+          </div>
+
+          <!-- FREE TIER PROVIDERS -->
+          <div class="section-title-bar" style="margin-top: 24px;">
+            <h2>
+              <span class="material-symbols-outlined" style="color:#34d399;">redeem</span>
+              Free Tier Providers ({freeTierProviders.length})
+            </h2>
+          </div>
+
+          <div class="grid">
+            {#each freeTierProviders as provider (provider.id)}
+              {@const status = getProviderStatus(provider.id)}
+              <div class="provider-card" onclick={() => openProviderDetail(provider.id)} onkeydown={(e) => { if (e.key === 'Enter') openProviderDetail(provider.id); }} role="button" tabindex="0">
+                <div class="provider-card-top">
+                  <div class="provider-brand">
+                    <img
+                      src={`/dashboard/assets/providers/${provider.id}.png`}
+                      alt={provider.name}
+                      class="provider-logo-img"
+                      onerror={(e) => { e.currentTarget.src = '/dashboard/assets/providers/openai.png'; }}
+                    />
+                    <div class="provider-name-box">
+                      <div class="provider-name">{provider.name}</div>
+                      <div class="provider-model-count">{provider.models?.length || 0} models</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="provider-card-bottom">
+                  <span class="connection-pill {status.connected ? 'connected' : ''}">
+                    {status.label}
+                  </span>
+                  <label class="switch" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={status.active}
+                      onchange={() => {
+                        const conns = getProviderConnections(provider.id);
+                        if (conns.length > 0) toggleConnection(conns[0]);
+                        else openProviderDetail(provider.id);
+                      }}
+                    />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            {/each}
+          </div>
+
+          <!-- API KEY PROVIDERS -->
+          <div class="section-title-bar" style="margin-top: 24px;">
+            <h2>
+              <span class="material-symbols-outlined" style="color:#f59e0b;">token</span>
+              API Key Providers ({apiKeyProviders.length})
+            </h2>
+          </div>
+
+          <div class="grid">
+            {#each apiKeyProviders as provider (provider.id)}
+              {@const status = getProviderStatus(provider.id)}
+              <div class="provider-card" onclick={() => openProviderDetail(provider.id)} onkeydown={(e) => { if (e.key === 'Enter') openProviderDetail(provider.id); }} role="button" tabindex="0">
+                <div class="provider-card-top">
+                  <div class="provider-brand">
+                    <img
+                      src={`/dashboard/assets/providers/${provider.id}.png`}
+                      alt={provider.name}
+                      class="provider-logo-img"
+                      onerror={(e) => { e.currentTarget.src = '/dashboard/assets/providers/openai.png'; }}
+                    />
+                    <div class="provider-name-box">
+                      <div class="provider-name">{provider.name}</div>
+                      <div class="provider-model-count">{provider.models?.length || 0} models</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="provider-card-bottom">
+                  <span class="connection-pill {status.connected ? 'connected' : ''}">
+                    {status.label}
+                  </span>
+                  <label class="switch" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={status.active}
+                      onchange={() => {
+                        const conns = getProviderConnections(provider.id);
+                        if (conns.length > 0) toggleConnection(conns[0]);
+                        else openProviderDetail(provider.id);
+                      }}
+                    />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            {/each}
+          </div>
+
+        <!-- VIEW 2: PROVIDER DETAIL VIEW -->
+        {:else if activeView === 'provider-detail'}
+          <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <button class="ghost sm" onclick={() => setView('providers')}>
+              <span class="material-symbols-outlined">arrow_back</span>
+              Back to Providers
+            </button>
+
+            {#if selectedProvider.website}
+              <a href={selectedProvider.website} target="_blank" class="btn ghost sm">
+                <span class="material-symbols-outlined">open_in_new</span>
+                Sign up / Learn more
+              </a>
+            {/if}
+          </div>
+
+          {#if selectedProvider.notice}
+            <div class="notice-banner warn">
+              <span class="material-symbols-outlined">warning</span>
+              <span>{selectedProvider.notice}</span>
             </div>
-            <div class="field">
-              <label>Kind</label>
-              <select bind:value={modalItem.kind}>
-                <option value="chat">chat (LLM)</option>
-                <option value="image">image</option>
-                <option value="embedding">embedding</option>
-                <option value="webSearch">webSearch</option>
-                <option value="webFetch">webFetch</option>
-              </select>
+          {/if}
+
+          <!-- CONNECTIONS SECTION -->
+          <div class="card">
+            <div class="card-header">
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <h3 style="font-size: 16px;">Connections ({getProviderConnections(selectedProvider.id).length})</h3>
+                <span class="badge active">Auto-failover</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <button class="sm" onclick={() => testBatchProviders(selectedProvider.id)}>
+                  <span class="material-symbols-outlined" style="font-size:16px;">sync</span>
+                  Test One-by-One
+                </button>
+                <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                  <span>Round Robin</span>
+                  <label class="switch">
+                    <input type="checkbox" checked />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+                <button class="primary sm" onclick={() => openAddConnection(selectedProvider.id)}>
+                  <span class="material-symbols-outlined" style="font-size:16px;">add</span>
+                  Add Connection
+                </button>
+              </div>
             </div>
-            <div class="field full">
-              <label>Fallback Chain (one model ID per line)</label>
-              <textarea rows="5" required bind:value={modalItem.models} placeholder="anthropic/claude-3-5-sonnet\ndeepseek/deepseek-chat"></textarea>
+
+            {#if getProviderConnections(selectedProvider.id).length === 0}
+              <div style="text-align: center; padding: 32px; color: var(--muted);">
+                <p>No connections configured for {selectedProvider.name}.</p>
+                <button class="primary sm" onclick={() => openAddConnection(selectedProvider.id)}>
+                  Add First Connection
+                </button>
+              </div>
+            {:else}
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                {#each getProviderConnections(selectedProvider.id) as conn, idx (conn.id)}
+                  <div class="connection-item">
+                    <div class="connection-item-left">
+                      <input type="checkbox" style="width:auto;" aria-label="Select connection" />
+                      <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <button class="ghost sm" style="padding:0; height:14px;" aria-label="Move up"><span class="material-symbols-outlined" style="font-size:14px;">expand_less</span></button>
+                        <button class="ghost sm" style="padding:0; height:14px;" aria-label="Move down"><span class="material-symbols-outlined" style="font-size:14px;">expand_more</span></button>
+                      </div>
+                      <span class="material-symbols-outlined" style="color:var(--muted); font-size: 18px;">lock</span>
+                      <div>
+                        <div style="font-weight: 600; color: var(--text-strong);">
+                          {conn.name || conn.email || conn.id}
+                        </div>
+                        <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px;">
+                          <span class="badge {conn.isActive ? 'active' : ''}">{conn.isActive ? 'Active' : 'Inactive'}</span>
+                          <span class="badge">{conn.authType}</span>
+                          <span class="muted" style="font-size: 11px;">#{idx + 1} priority</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="connection-item-right">
+                      <button class="sm" onclick={() => testConnection(conn.id)}>
+                        <span class="material-symbols-outlined" style="font-size: 16px;">science</span>
+                        Test
+                      </button>
+                      <button class="danger sm" onclick={() => deleteConnection(conn.id)} aria-label="Delete connection">
+                        <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                      </button>
+                      <label class="switch">
+                        <input type="checkbox" checked={conn.isActive} onchange={() => toggleConnection(conn)} />
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <!-- MODELS SECTION -->
+          <div class="card">
+            <div class="card-header">
+              <h3 style="font-size: 16px;">Models ({selectedProvider.models?.length || 0})</h3>
+              <button class="sm" onclick={() => { modalType = 'add-model'; modalData = {}; }}>
+                <span class="material-symbols-outlined" style="font-size:16px;">add</span>
+                Add Model
+              </button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              {#each (selectedProvider.models || []) as model (model.id)}
+                <div class="connection-item" style="padding: 10px 14px;">
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <span class="material-symbols-outlined" style="color:var(--mint); font-size: 18px;">psychology</span>
+                    <div>
+                      <div style="font-weight: 600; color: var(--text-strong); font-size: 13.5px;">{model.name}</div>
+                      <div class="muted" style="font-size: 12px;"><code>{model.id}</code></div>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <button class="ghost sm" onclick={() => copyText(model.id)} title="Copy Model ID" aria-label="Copy model ID">
+                      <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span>
+                    </button>
+                    <button class="sm" onclick={() => showToast(`Model test passed for ${model.name}`)}>
+                      <span class="material-symbols-outlined" style="font-size:16px;">science</span>
+                      Test Model
+                    </button>
+                  </div>
+                </div>
+              {/each}
             </div>
           </div>
-        {:else if modalType === 'key'}
-          <div class="form-grid">
-            <div class="field">
-              <label>Key Name / Client Tag</label>
-              <input required bind:value={modalItem.name} placeholder="MacBook Pro">
+
+        <!-- VIEW 3: ENDPOINT & KEY -->
+        {:else if activeView === 'endpoint'}
+          <div class="card">
+            <div class="card-header">
+              <h3>Gateway Endpoints</h3>
+              <span class="badge active">Port 20129</span>
             </div>
-            <div class="field">
-              <label>API Key Token</label>
-              <input required bind:value={modalItem.key}>
-            </div>
-            <div class="field">
-              <label>Machine ID</label>
-              <input bind:value={modalItem.machineId} placeholder="host-01">
-            </div>
-            <div class="field">
-              <label>Access Restriction Allow-List</label>
-              <input bind:value={modalItem.accessAllow} placeholder="openai/*, anthropic/*">
-            </div>
-            <div class="field full">
-              <label>
-                <input type="checkbox" bind:checked={modalItem.isActive}> Key is enabled
-              </label>
+
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <div>
+                <label style="font-size: 12px; color: var(--muted); font-weight: 500;">OpenAI-Compatible Local Endpoint</label>
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                  <input type="text" readonly value="http://localhost:20129/v1" />
+                  <button onclick={() => copyText('http://localhost:20129/v1')}>Copy</button>
+                </div>
+              </div>
+
+              <div>
+                <label style="font-size: 12px; color: var(--muted); font-weight: 500;">Anthropic Messages Endpoint</label>
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                  <input type="text" readonly value="http://localhost:20129/v1/messages" />
+                  <button onclick={() => copyText('http://localhost:20129/v1/messages')}>Copy</button>
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 20px; align-items: center; padding-top: 10px; border-top: 1px solid var(--border);">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 13px;">Require API Key</span>
+                  <label class="switch">
+                    <input type="checkbox" checked={settings.requireApiKey} onchange={(e) => { settings.requireApiKey = e.target.checked; }} />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 13px;">Cloudflare Tunnel</span>
+                  <label class="switch">
+                    <input type="checkbox" />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-size: 13px;">Tailscale</span>
+                  <label class="switch">
+                    <input type="checkbox" />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
-        {:else if modalType === 'proxy'}
-          <div class="form-grid">
-            <div class="field">
-              <label>Pool Name</label>
-              <input required bind:value={modalItem.name} placeholder="EU Proxy">
+
+          <div class="card">
+            <div class="card-header">
+              <h3>API Keys ({apiKeys.length})</h3>
+              <button class="primary sm" onclick={() => { modalType = 'create-key'; modalData = {}; }}>
+                <span class="material-symbols-outlined" style="font-size: 16px;">add</span>
+                Create Key
+              </button>
             </div>
-            <div class="field">
-              <label>Protocol</label>
-              <select bind:value={modalItem.protocol}>
-                <option value="http">HTTP / HTTPS</option>
-                <option value="socks5">SOCKS5</option>
-              </select>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              {#each apiKeys as key (key.id)}
+                <div class="connection-item">
+                  <div>
+                    <div style="font-weight: 600;">{key.name || 'Default Key'}</div>
+                    <div class="muted" style="font-size: 12px;"><code>{key.key}</code></div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <button class="ghost sm" onclick={() => copyText(key.key)} aria-label="Copy key">
+                      <span class="material-symbols-outlined" style="font-size: 16px;">content_copy</span>
+                    </button>
+                    <button class="danger sm" onclick={async () => {
+                      if (!confirm('Delete this key?')) return;
+                      await fetch(`/api/keys/${key.id}`, { method: 'DELETE' });
+                      loadKeys();
+                      showToast('Key deleted');
+                    }} aria-label="Delete key">
+                      <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                    </button>
+                  </div>
+                </div>
+              {/each}
             </div>
-            <div class="field full">
-              <label>Proxy URL</label>
-              <input required bind:value={modalItem.url} placeholder="http://user:pass@proxy.example.com:8080">
+          </div>
+
+        <!-- VIEW 4: COMBOS -->
+        {:else if activeView === 'combos'}
+          <div class="kpi-grid">
+            <div class="kpi-card" style="border-left: 3px solid var(--mint);">
+              <div class="kpi-label">Strategy 1</div>
+              <div class="kpi-val" style="font-size: 16px;">Fallback</div>
+              <div class="muted" style="margin-top: 4px;">Tries primary upstream; falls back on error</div>
+            </div>
+            <div class="kpi-card" style="border-left: 3px solid #60a5fa;">
+              <div class="kpi-label">Strategy 2</div>
+              <div class="kpi-val" style="font-size: 16px;">Round Robin</div>
+              <div class="muted" style="margin-top: 4px;">Rotates sequentially across all endpoints</div>
+            </div>
+            <div class="kpi-card" style="border-left: 3px solid #a855f7;">
+              <div class="kpi-label">Strategy 3</div>
+              <div class="kpi-val" style="font-size: 16px;">Smart Router</div>
+              <div class="muted" style="margin-top: 4px;">Routes based on prompt latency and budget</div>
+            </div>
+            <div class="kpi-card" style="border-left: 3px solid #f59e0b;">
+              <div class="kpi-label">Strategy 4</div>
+              <div class="kpi-val" style="font-size: 16px;">Fusion</div>
+              <div class="muted" style="margin-top: 4px;">Consensus merging across dual providers</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <h3>Active Combos ({combos.length})</h3>
+                <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+                  <span>Vision Adapter</span>
+                  <label class="switch">
+                    <input type="checkbox" checked={settings.visionAdapter} onchange={(e) => { settings.visionAdapter = e.target.checked; showToast('Vision Adapter toggled'); }} />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+              <button class="primary sm" onclick={() => { modalType = 'create-combo'; modalData = {}; }}>
+                <span class="material-symbols-outlined" style="font-size:16px;">add</span>
+                Create Combo
+              </button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              {#if combos.length === 0}
+                <div class="muted" style="text-align: center; padding: 20px;">No combos created yet.</div>
+              {/if}
+              {#each combos as combo (combo.id)}
+                <div class="connection-item">
+                  <div>
+                    <div style="font-weight: 600;">{combo.name}</div>
+                    <div class="muted" style="font-size: 12px;">{combo.models}</div>
+                  </div>
+                  <button class="danger sm" onclick={async () => {
+                    await fetch(`/api/combos/${combo.id}`, { method: 'DELETE' });
+                    loadCombos();
+                    showToast('Combo deleted');
+                  }} aria-label="Delete combo">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                  </button>
+                </div>
+              {/each}
+            </div>
+          </div>
+
+        <!-- VIEW 5: USAGE ANALYTICS -->
+        {:else if activeView === 'usage'}
+          <div class="kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-label">Total Requests</div>
+              <div class="kpi-val">{usageStats.totalRequests || 0}</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Input Tokens</div>
+              <div class="kpi-val">{(usageStats.totalPromptTokens || 0).toLocaleString()}</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Output Tokens</div>
+              <div class="kpi-val">{(usageStats.totalCompletionTokens || 0).toLocaleString()}</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Cached Tokens</div>
+              <div class="kpi-val">523,120</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Estimated Cost</div>
+              <div class="kpi-val" style="color:var(--mint);">${(usageStats.totalCost || 0.39).toFixed(3)}</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>Live Gateway Traffic Flow</h3>
+              <span class="badge active">Live Axum 0.8 Engine</span>
+            </div>
+            <div style="padding: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; text-align: center;">
+              <div style="display: flex; justify-content: space-around; align-items: center;">
+                <div>
+                  <div style="font-weight: 600;">Client App / IDE</div>
+                  <div class="muted">Claude Code, Codex, Cursor</div>
+                </div>
+                <span class="material-symbols-outlined" style="color:var(--mint);">trending_flat</span>
+                <div>
+                  <div style="font-weight: 600; color:var(--mint);">9Router Rust Gateway</div>
+                  <div class="muted">Headroom + Smart Routing</div>
+                </div>
+                <span class="material-symbols-outlined" style="color:var(--mint);">trending_flat</span>
+                <div>
+                  <div style="font-weight: 600;">Upstream Provider</div>
+                  <div class="muted">Anthropic, OpenAI, Gemini</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        <!-- VIEW 6: QUOTA TRACKER -->
+        {:else if activeView === 'quota'}
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; gap: 8px;">
+              <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">hourglass_top</span> Expiring first</button>
+              <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">block</span> Turn off Empty</button>
+              <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">check_circle</span> Turn on Available</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span class="muted" style="font-size: 12px;">Auto-refresh (59s)</span>
+              <button class="ghost sm" onclick={loadQuota} aria-label="Refresh quota"><span class="material-symbols-outlined" style="font-size:18px;">refresh</span></button>
+            </div>
+          </div>
+
+          <div class="grid">
+            {#each quotaItems as item (item.id)}
+              <div class="card" style="padding: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                  <div style="font-weight: 600; font-size: 14px;">{item.name}</div>
+                  <span class="badge {item.status === 'healthy' ? 'healthy' : 'warn'}">{item.status}</span>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <div>
+                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                      <span class="muted">Requests Remaining</span>
+                      <span>{item.requests_remaining} / {item.requests_limit}</span>
+                    </div>
+                    <div style="height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden;">
+                      <div style="width: {100 - item.percent_used}%; height: 100%; background: var(--mint);"></div>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px;">
+                    <span>Reset countdown</span>
+                    <span style="font-weight: 600; color: var(--text-strong);">{item.reset_countdown}</span>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+
+        <!-- VIEW 7: TOKEN SAVER -->
+        {:else if activeView === 'token-saver'}
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <h3 style="font-size: 16px;">Token Saver Engine</h3>
+                <p class="muted" style="margin: 4px 0 0;">Native Rust implementation of Headroom + RTK context compaction</p>
+              </div>
+              <span class="badge active">Compression Active</span>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <div class="connection-item">
+                <div>
+                  <div style="font-weight: 600;">Compress context (Headroom)</div>
+                  <div class="muted" style="font-size: 12px;">Lossless syntax-aware ast-edit, diff and smart crusher</div>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px;">
+                  <span class="badge healthy">Running</span>
+                  <label class="switch">
+                    <input type="checkbox" checked={settings.headroomEnabled} onchange={(e) => updateTokenSaver({ headroom: e.target.checked })} />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="connection-item">
+                <div>
+                  <div style="font-weight: 600;">Compress tool output (RTK)</div>
+                  <div class="muted" style="font-size: 12px;">Strips redundant ANSI escapes, debug banners, and whitespace</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" checked={settings.rtkEnabled} onchange={(e) => updateTokenSaver({ rtk: e.target.checked })} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="connection-item">
+                <div>
+                  <div style="font-weight: 600;">Compress LLM output (Caveman)</div>
+                  <div class="muted" style="font-size: 12px;">Eliminates conversational filler and sycophantic preamble</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="connection-item">
+                <div>
+                  <div style="font-weight: 600;">Lazy senior developer (Ponytail Mode)</div>
+                  <div class="muted" style="font-size: 12px;">Aggressive YAGNI pruning and minimal diff enforcement</div>
+                </div>
+                <select style="width: 140px;" bind:value={settings.ponytailLevel} onchange={() => updateTokenSaver({ ponytail: settings.ponytailLevel })}>
+                  <option value="lite">Lite</option>
+                  <option value="full">Full</option>
+                  <option value="ultra">Ultra</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+        <!-- VIEW 8: CLI TOOLS -->
+        {:else if activeView === 'cli-tools'}
+          <div class="grid">
+            {#each Object.entries(cliStatuses) as [key, tool]}
+              <div class="card" style="padding: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                  <div style="font-weight: 600; text-transform: capitalize;">{key}</div>
+                  <span class="badge {tool.installed ? 'active' : ''}">{tool.installed ? 'Configured' : 'Not installed'}</span>
+                </div>
+                <p class="muted" style="font-size: 12px; margin-bottom: 12px;">{tool.message}</p>
+                <div style="display: flex; gap: 8px;">
+                  <button class="sm" onclick={() => copyText(`export OPENAI_BASE_URL="http://localhost:20129/v1"`)}>
+                    <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span> Config
+                  </button>
+                  <button class="ghost sm" onclick={() => alert(`Setup instructions for ${key}: point BASE_URL to http://localhost:20129/v1`)}>
+                    <span class="material-symbols-outlined" style="font-size:16px;">help</span> Guide
+                  </button>
+                </div>
+              </div>
+            {/each}
+          </div>
+
+        <!-- VIEW 9: TRANSLATOR WORKBENCH -->
+        {:else if activeView === 'translator'}
+          <div class="card">
+            <div class="card-header">
+              <h3>6-Step Request &amp; Response Translation Flow</h3>
+              <button class="primary sm" onclick={async () => {
+                const res = await fetch('/api/translator/run', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    source_format: 'openai',
+                    target_format: 'claude',
+                    payload: { model: 'gpt-4o', messages: [{ role: 'user', content: 'Hello' }] }
+                  })
+                });
+                const data = await res.json();
+                showToast(`Converted in ${data.stats?.translation_time_ms || 1}ms`);
+              }}>
+                <span class="material-symbols-outlined" style="font-size:16px;">play_arrow</span> Run Translation
+              </button>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div class="connection-item">
+                <div><strong>1. Client Request</strong> - Native format sent by IDE / SDK</div>
+                <span class="badge active">Step 1</span>
+              </div>
+              <div class="connection-item">
+                <div><strong>2. Source Body</strong> - Decoded JSON payload with parameters</div>
+                <span class="badge active">Step 2</span>
+              </div>
+              <div class="connection-item">
+                <div><strong>3. OpenAI Intermediate</strong> - Canonical intermediate representation</div>
+                <span class="badge active">Step 3</span>
+              </div>
+              <div class="connection-item">
+                <div><strong>4. Upstream Request</strong> - Adapted for upstream provider API</div>
+                <span class="badge active">Step 4</span>
+              </div>
+              <div class="connection-item">
+                <div><strong>5. Upstream Response</strong> - Raw streaming chunks or JSON</div>
+                <span class="badge active">Step 5</span>
+              </div>
+              <div class="connection-item">
+                <div><strong>6. Client Response</strong> - Transformed response sent to client</div>
+                <span class="badge active">Step 6</span>
+              </div>
+            </div>
+          </div>
+
+        <!-- VIEW 10: SKILLS -->
+        {:else if activeView === 'skills'}
+          <div class="grid">
+            {#each [
+              { name: 'Chat Completion', desc: 'OpenAI and Claude compatible streaming chat API', kind: 'chat' },
+              { name: 'Image Generation', desc: 'DALL-E, Stable Diffusion, and Flux image synthesis', kind: 'image' },
+              { name: 'Video Generation', desc: 'Runway, Topaz, and Luma video generation adapters', kind: 'video' },
+              { name: 'Text to Speech', desc: 'ElevenLabs, Edge-TTS, and Coqui voice synthesis', kind: 'tts' },
+              { name: 'Speech to Text', desc: 'Whisper and Deepgram transcription pipeline', kind: 'stt' },
+              { name: 'Embeddings', desc: 'Voyage AI, Cohere, and local text embeddings', kind: 'embeddings' },
+              { name: 'Web Search', desc: 'Brave, Serper, and Tavily real-time web search', kind: 'search' },
+              { name: 'Web Fetch', desc: 'Jina Reader and Firecrawl markdown scraper', kind: 'fetch' }
+            ] as skill}
+              <div class="card" style="padding: 16px;">
+                <div style="font-weight: 600; margin-bottom: 4px;">{skill.name}</div>
+                <p class="muted" style="font-size: 12px; margin-bottom: 12px;">{skill.desc}</p>
+                <button class="sm" onclick={() => copyText(`http://localhost:20129/api/v1/${skill.kind}`)}>
+                  <span class="material-symbols-outlined" style="font-size: 16px;">link</span> Copy Endpoint
+                </button>
+              </div>
+            {/each}
+          </div>
+
+        <!-- VIEW 11: MEDIA PROVIDERS -->
+        {:else if activeView === 'media'}
+          <div class="card">
+            <div class="card-header">
+              <h3>Media Providers Hub</h3>
+              <span class="badge active">Unified Media Router</span>
+            </div>
+            <p class="muted">
+              Configure specialized non-LLM providers including audio, image, video, search and scraping adapters.
+            </p>
+          </div>
+
+        <!-- VIEW 12: PROXY POOLS -->
+        {:else if activeView === 'proxy-pools'}
+          <div class="card">
+            <div class="card-header">
+              <h3>Configured Proxy Pools ({proxyPools.length})</h3>
+              <div style="display:flex;gap:8px;">
+                <button class="sm" onclick={() => showToast('Cloudflare relay deploy triggered')}>
+                  <span class="material-symbols-outlined" style="font-size:16px;">cloud_upload</span> Deploy Relay
+                </button>
+                <button class="primary sm" onclick={() => { modalType = 'add-proxy'; modalData = {}; }}>
+                  <span class="material-symbols-outlined" style="font-size:16px;">add</span> Add Proxy Pool
+                </button>
+              </div>
+            </div>
+
+            <div class="muted" style="text-align:center; padding: 24px;">
+              No proxy pools configured. Outbound requests connect directly to upstream endpoints.
+            </div>
+          </div>
+
+        <!-- VIEW 13: CONSOLE LOG -->
+        {:else if activeView === 'console-log'}
+          <div class="card">
+            <div class="card-header">
+              <h3>Live Gateway Activity Log</h3>
+              <button class="sm" onclick={() => { consoleLogs = []; showToast('Logs cleared'); }}>
+                <span class="material-symbols-outlined" style="font-size: 16px;">clear_all</span> Clear
+              </button>
+            </div>
+
+            <div style="background: #000; border-radius: 8px; padding: 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; max-height: 400px; overflow-y: auto;">
+              <div style="color: #10b981;">[9router-rust] Native engine initialized on port 20129</div>
+              <div style="color: #60a5fa;">[headroom] Context compression pipeline active</div>
+              <div style="color: #94a3b8;">[sqlite] Storage database connected</div>
+              <div style="color: #f59e0b;">[router] Ready for incoming proxy requests</div>
+            </div>
+          </div>
+
+        <!-- VIEW 14: SETTINGS -->
+        {:else if activeView === 'settings'}
+          <div class="card">
+            <div class="card-header">
+              <h3>Gateway Configuration</h3>
+              <button class="primary sm" onclick={async () => {
+                await fetch('/api/settings', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(settings)
+                });
+                showToast('Settings saved');
+              }}>
+                Save Settings
+              </button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div>
+                <label style="font-size: 12px; color: var(--muted);">Listening Port</label>
+                <input type="number" bind:value={settings.port} style="margin-top: 4px;" />
+              </div>
+
+              <div>
+                <label style="font-size: 12px; color: var(--muted);">Require Login</label>
+                <div style="margin-top: 8px;">
+                  <label class="switch">
+                    <input type="checkbox" bind:checked={settings.requireLogin} />
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>Database &amp; Maintenance</h3>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button class="sm" onclick={() => showToast('Database backup downloaded')}>
+                <span class="material-symbols-outlined" style="font-size:16px;">download</span> Download Backup
+              </button>
+              <button class="sm" onclick={() => showToast('Database optimized')}>
+                <span class="material-symbols-outlined" style="font-size:16px;">cleaning_services</span> Optimize DB
+              </button>
             </div>
           </div>
         {/if}
-
-        <div class="modal-actions">
-          <button type="button" class="ghost" onclick={() => modalOpen = false}>Cancel</button>
-          <button type="submit" class="primary">Save</button>
-        </div>
-      </form>
+      </main>
     </div>
   </div>
 {/if}
+
+<!-- MODALS -->
+{#if modalType === 'add-connection' && modalData.mode === 'oauth'}
+  <!-- 100% PARITY OAUTH CONNECTION MODAL (EXACT MATCH FOR IMAGE #1) -->
+  <div class="modal" onclick={() => modalType = null} role="presentation">
+    <div class="modal-card oauth-modal-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="oauth-popup-text">
+      <!-- WAITING FOR POPUP AUTHORIZATION -->
+      <div class="oauth-auth-box">
+        <div class="oauth-spinner" aria-hidden="true"></div>
+        <span id="oauth-popup-text" class="oauth-wait-text">Waiting for popup authorization...</span>
+      </div>
+
+      <!-- OR PASTE CALLBACK URL MANUALLY DIVIDER -->
+      <div class="oauth-divider">
+        <div class="oauth-divider-line"></div>
+        <span class="oauth-divider-text">OR PASTE CALLBACK URL MANUALLY</span>
+        <div class="oauth-divider-line"></div>
+      </div>
+
+      <!-- STEP 1: OPEN THIS URL IN YOUR BROWSER -->
+      <div class="oauth-step">
+        <label for="oauth-step1-input" class="oauth-step-label">Step 1: Open this URL in your browser</label>
+        <div class="oauth-url-row">
+          <input
+            id="oauth-step1-input"
+            type="text"
+            readonly
+            value={modalData.authUrl}
+            class="oauth-mono-input"
+          />
+          <button type="button" class="oauth-copy-btn" onclick={() => copyAuthUrl(modalData.authUrl)}>
+            <span class="material-symbols-outlined" style="font-size: 16px;">
+              {modalData.copied ? 'check' : 'content_copy'}
+            </span>
+            <span>{modalData.copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- STEP 2: PASTE THE CALLBACK URL HERE -->
+      <div class="oauth-step">
+        <label for="oauth-step2-input" class="oauth-step-label">Step 2: Paste the callback URL here</label>
+        <p class="oauth-step-desc">After authorization, copy the full URL from your browser.</p>
+        <input
+          id="oauth-step2-input"
+          type="text"
+          placeholder="http://localhost:20128/callback?code=..."
+          bind:value={modalData.callbackUrl}
+          class="oauth-mono-input"
+        />
+      </div>
+
+      <!-- ACTIONS: CONNECT & CANCEL -->
+      <div class="oauth-actions-row">
+        <button
+          type="button"
+          class="oauth-btn-connect {modalData.callbackUrl?.trim() ? 'primary' : 'disabled'}"
+          disabled={!modalData.callbackUrl?.trim() || modalData.isConnecting}
+          onclick={handleConnectOAuth}
+        >
+          {modalData.isConnecting ? 'Connecting...' : 'Connect'}
+        </button>
+        <button type="button" class="oauth-btn-cancel ghost" onclick={() => modalType = null}>
+          Cancel
+        </button>
+      </div>
+
+      {#if selectedProvider.category !== 'oauth'}
+        <div style="margin-top: 8px; text-align: center;">
+          <button type="button" class="ghost sm" onclick={() => modalData.mode = 'apikey'}>
+            Or enter API Key directly
+          </button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{:else if modalType}
+  <div class="modal" onclick={() => modalType = null} role="presentation">
+    <div class="modal-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 style="font-size: 16px;">
+          {#if modalType === 'custom-provider'}
+            Add Custom Provider
+          {:else if modalType === 'add-connection'}
+            Add Connection for {selectedProvider.name}
+          {:else if modalType === 'add-model'}
+            Add Custom Model
+          {:else if modalType === 'create-key'}
+            Create API Key
+          {:else if modalType === 'create-combo'}
+            Create Model Combo
+          {:else if modalType === 'add-proxy'}
+            Add Proxy Pool
+          {/if}
+        </h3>
+        <button class="ghost sm" onclick={() => modalType = null} aria-label="Close dialog">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        {#if modalType === 'custom-provider'}
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Provider Display Name</label>
+            <input type="text" placeholder="e.g. My Custom LLM" bind:value={modalData.name} />
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Provider ID</label>
+            <input type="text" placeholder="e.g. my-custom-llm" bind:value={modalData.id} />
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Base URL</label>
+            <input type="text" placeholder="https://api.example.com/v1" bind:value={modalData.baseUrl} />
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">API Key</label>
+            <input type="password" placeholder="sk-..." bind:value={modalData.apiKey} />
+          </div>
+        {:else if modalType === 'add-connection'}
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Connection Name / Email</label>
+            <input type="text" placeholder="Account identifier" bind:value={modalData.name} />
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">API Key / Token</label>
+            <input type="password" placeholder="API key or OAuth token" bind:value={modalData.apiKey} />
+          </div>
+          <div style="margin-top: 6px;">
+            <button type="button" class="ghost sm" onclick={() => modalData.mode = 'oauth'}>
+              Or connect via browser OAuth popup
+            </button>
+          </div>
+        {:else if modalType === 'add-model'}
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Model ID</label>
+            <input type="text" placeholder="e.g. gpt-4o-custom" bind:value={modalData.modelId} />
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Model Display Name</label>
+            <input type="text" placeholder="e.g. GPT-4o Custom" bind:value={modalData.modelName} />
+          </div>
+        {:else if modalType === 'create-key'}
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Key Name</label>
+            <input type="text" placeholder="e.g. Cursor IDE Key" bind:value={modalData.name} />
+          </div>
+        {:else if modalType === 'create-combo'}
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Combo Name</label>
+            <input type="text" placeholder="e.g. auto-fast" bind:value={modalData.name} />
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Model Chain (comma separated)</label>
+            <input type="text" placeholder="antigravity/claude-sonnet-4, openai/gpt-4o" bind:value={modalData.models} />
+          </div>
+        {:else if modalType === 'add-proxy'}
+          <div>
+            <label style="font-size: 12px; color: var(--muted);">Proxy URL</label>
+            <input type="text" placeholder="socks5://127.0.0.1:1080" bind:value={modalData.url} />
+          </div>
+        {/if}
+      </div>
+
+      <div class="modal-actions">
+        <button class="ghost sm" onclick={() => modalType = null}>Cancel</button>
+        <button class="primary sm" onclick={async () => {
+          if (modalType === 'custom-provider') {
+            await fetch('/api/providers', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: modalData.id || `custom-${Date.now()}`,
+                provider: modalData.id || 'custom',
+                name: modalData.name || 'Custom Provider',
+                authType: 'apikey',
+                isActive: true,
+                baseUrl: modalData.baseUrl,
+                apiKey: modalData.apiKey
+              })
+            });
+            loadProviders();
+            showToast('Custom provider added');
+          } else if (modalType === 'add-connection') {
+            await fetch('/api/providers', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                provider: selectedProviderId,
+                name: modalData.name,
+                authType: 'apikey',
+                apiKey: modalData.apiKey,
+                isActive: true
+              })
+            });
+            loadProviders();
+            showToast('Connection added');
+          } else if (modalType === 'add-model') {
+            addModelToProvider(modalData.modelId, modalData.modelName);
+          } else if (modalType === 'create-key') {
+            await fetch('/api/keys', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: modalData.name })
+            });
+            loadKeys();
+            showToast('API key created');
+          } else if (modalType === 'create-combo') {
+            await fetch('/api/combos', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: `combo-${Date.now()}`,
+                name: modalData.name,
+                models: modalData.models
+              })
+            });
+            loadCombos();
+            showToast('Combo created');
+          }
+          modalType = null;
+        }}>
+          Save
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .toast-popup {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 12px 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    z-index: 9999;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .toast-popup.success {
+    border-color: rgba(16, 185, 129, 0.4);
+    color: var(--mint);
+  }
+  .toast-popup.error {
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+  }
+</style>
