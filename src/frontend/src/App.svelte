@@ -92,7 +92,6 @@
 
   let providerModels = $derived.by(() => {
     const conns = getProviderConnections(selectedProvider.id);
-    if (conns.length === 0) return [];
 
     const customList = [];
     for (const c of conns) {
@@ -273,7 +272,7 @@
     try {
       popupWindow = window.open(
         url,
-        'oauth_popup',
+        '_blank',
         'width=600,height=700,status=no,toolbar=no,menubar=no,location=yes,resizable=yes'
       );
       if (popupWindow && !popupWindow.closed) {
@@ -1012,7 +1011,6 @@
           </div>
 
           <!-- MODELS SECTION (ONLY RENDERED WHEN AT LEAST ONE CONNECTION IS CONNECTED) -->
-          {#if getProviderConnections(selectedProvider.id).length > 0}
             <div class="card">
               <div class="card-header">
                 <h3 style="font-size: 16px;">Models ({providerModels.length})</h3>
@@ -1046,7 +1044,6 @@
                 {/each}
               </div>
             </div>
-          {/if}
 
         <!-- VIEW 3: ENDPOINT & KEY -->
         {:else if activeView === 'endpoint'}
@@ -1557,17 +1554,18 @@
   <div class="modal" onclick={() => modalType = null} role="presentation">
     <div class="modal-card oauth-modal-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="oauth-popup-text">
       <!-- WAITING FOR POPUP AUTHORIZATION (CLICKABLE BUTTON TO LAUNCH/RE-FOCUS POPUP) -->
-      <button
-        type="button"
-        class="oauth-auth-box oauth-auth-box-btn"
-        onclick={() => openOAuthPopup(modalData.authUrl)}
-        title="Click to open authorization popup in browser"
-        aria-label="Open authorization popup"
+      <a
+        href={modalData.authUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="oauth-auth-box oauth-auth-box-link"
+        title="Open authorization page in browser"
+        aria-label="Open authorization page"
       >
         <div class="oauth-spinner" aria-hidden="true"></div>
         <span id="oauth-popup-text" class="oauth-wait-text">Waiting for popup authorization...</span>
         <span class="material-symbols-outlined" style="margin-left: auto; font-size: 16px; color: var(--muted-dark);">open_in_new</span>
-      </button>
+      </a>
 
       <!-- OR PASTE CALLBACK URL MANUALLY DIVIDER -->
       <div class="oauth-divider">
@@ -1588,10 +1586,16 @@
             class="oauth-mono-input"
             onclick={(e) => { e.currentTarget.select(); }}
           />
-          <button type="button" class="oauth-copy-btn" onclick={() => openOAuthPopup(modalData.authUrl)} title="Open authorization popup window">
+          <a
+            href={modalData.authUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="oauth-copy-btn"
+            title="Open in browser"
+          >
             <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
             <span>Open</span>
-          </button>
+          </a>
           <button type="button" class="oauth-copy-btn" onclick={() => copyAuthUrl(modalData.authUrl)} title="Copy URL">
             <span class="material-symbols-outlined" style="font-size: 16px;">
               {modalData.copied ? 'check' : 'content_copy'}

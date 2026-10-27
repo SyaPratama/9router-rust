@@ -796,6 +796,19 @@ input:focus, select:focus, textarea:focus {
   background: #27272e;
   border-color: #3f3f46;
 }
+.oauth-auth-box-link {
+  width: 100%;
+  cursor: pointer;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s ease;
+  color: inherit;
+}
+.oauth-auth-box-link:hover {
+  background: #27272e;
+  border-color: #3f3f46;
+}
 
 .oauth-spinner {
   width: 18px;
