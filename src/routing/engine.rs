@@ -17,6 +17,13 @@ pub struct RoutingEngine {
     pub account_mgr: AccountManager,
     pub headroom: Arc<HeadroomPipeline>,
 }
+pub struct DispatchResult {
+    pub response: reqwest::Response,
+    pub provider: String,
+    pub model: String,
+    pub connection_id: Option<String>,
+}
+
 
 impl RoutingEngine {
     pub fn new(pool: DbPool) -> Self {
@@ -28,7 +35,7 @@ impl RoutingEngine {
         }
     }
 
-    pub async fn dispatch_chat(&self, mut req: ChatRequest) -> Result<reqwest::Response, (axum::http::StatusCode, String)> {
+    pub async fn dispatch_chat(&self, mut req: ChatRequest) -> Result<DispatchResult, (axum::http::StatusCode, String)> {
         let conn = self.pool.get().map_err(|e| {
             (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("DB connection error: {}", e))
         })?;
@@ -68,7 +75,9 @@ impl RoutingEngine {
 
                     let res = self.send_to_upstream(&parsed.provider, &base_url, &env_key, &sub_req).await;
                     match res {
-                        Ok(resp) if resp.status().is_success() => return Ok(resp),
+                        Ok(resp) if resp.status().is_success() => return Ok(DispatchResult {
+                            response: resp, provider: parsed.provider, model: parsed.model, connection_id: None,
+                        }),
                         Ok(resp) => {
                             last_error = format!("Upstream HTTP error: {}", resp.status());
                         }
@@ -105,7 +114,9 @@ impl RoutingEngine {
                         let status = resp.status();
                         if status.is_success() {
                             self.account_mgr.clear_strikes(&account.id);
-                            return Ok(resp);
+                            return Ok(DispatchResult {
+                                response: resp, provider: parsed.provider, model: parsed.model, connection_id: Some(account.id.clone()),
+                            });
                         } else if status.as_u16() == 429 || status.is_server_error() {
                             // Rate limit or temporary error: strike and fallback to next account
                             self.account_mgr.record_strike(&account.id);
@@ -113,7 +124,9 @@ impl RoutingEngine {
                             continue;
                         } else {
                             // Client error (e.g. 400 Bad Request): return immediately
-                            return Ok(resp);
+                            return Ok(DispatchResult {
+                                response: resp, provider: parsed.provider, model: parsed.model, connection_id: Some(account.id.clone()),
+                            });
                         }
                     }
                     Err(e) => {

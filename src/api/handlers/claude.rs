@@ -7,6 +7,18 @@ use crate::api::middleware::AppState;
 use crate::routing::create_sse_response;
 use crate::translator::{ChatMessage, ChatRequest};
 
+use crate::api::handlers::chat::record_usage;
+fn claude_usage(value: &Value) -> Option<Value> {
+    let usage = value.get("usage")?;
+    let mut result = serde_json::Map::new();
+    for (source, target) in [("prompt_tokens", "input_tokens"), ("completion_tokens", "output_tokens")] {
+        if let Some(tokens) = usage.get(source) {
+            result.insert(target.to_string(), tokens.clone());
+        }
+    }
+    (!result.is_empty()).then_some(Value::Object(result))
+}
+
 pub async fn handle_claude_messages(
     State(state): State<AppState>,
     Json(payload): Json<Value>,
@@ -48,17 +60,26 @@ pub async fn handle_claude_messages(
         tools: payload.get("tools").and_then(|t| t.as_array()).cloned(),
     };
 
-    let resp = state.engine.dispatch_chat(chat_req).await?;
+    let dispatch = state.engine.dispatch_chat(chat_req).await?;
+    let provider = dispatch.provider;
+    let model = dispatch.model;
+    let connection_id = dispatch.connection_id;
+    let resp = dispatch.response;
 
     if stream {
-        let stream = resp.bytes_stream();
-        let sse = create_sse_response(stream);
+        if resp.status().is_success() {
+            record_usage(state.engine.pool.clone(), provider, model, connection_id, "/v1/messages", None, "accepted");
+        }
+        let sse = create_sse_response(resp.bytes_stream());
         Ok(sse.into_response())
     } else {
         let status = resp.status();
         let body_bytes = resp.bytes().await.map_err(|e| {
             (StatusCode::BAD_GATEWAY, format!("Failed reading upstream response: {}", e))
         })?;
+        if status.is_success() {
+            record_usage(state.engine.pool.clone(), provider, model, connection_id, "/v1/messages", Some(&body_bytes), "success");
+        }
 
         // If upstream was OpenAI, convert to Anthropic response
         if let Ok(openai_val) = serde_json::from_slice::<Value>(&body_bytes) {
@@ -72,21 +93,18 @@ pub async fn handle_claude_messages(
                     .and_then(|c| c.as_str())
                     .unwrap_or("");
 
-                serde_json::json!({
+                let mut claude_resp = serde_json::json!({
                     "id": format!("msg_{}", uuid::Uuid::new_v4()),
                     "type": "message",
                     "role": "assistant",
-                    "content": [{
-                        "type": "text",
-                        "text": content_str
-                    }],
+                    "content": [{ "type": "text", "text": content_str }],
                     "model": openai_val.get("model").and_then(|m| m.as_str()).unwrap_or("claude"),
-                    "stop_reason": "end_turn",
-                    "usage": {
-                        "input_tokens": 10,
-                        "output_tokens": 10
-                    }
-                })
+                    "stop_reason": "end_turn"
+                });
+                if let Some(usage) = claude_usage(&openai_val) {
+                    claude_resp["usage"] = usage;
+                }
+                claude_resp
             } else {
                 openai_val
             };
@@ -106,5 +124,17 @@ pub async fn handle_claude_messages(
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             Ok(response)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::claude_usage;
+    use serde_json::json;
+
+    #[test]
+    fn maps_only_reported_token_counts() {
+        assert_eq!(claude_usage(&json!({ "usage": { "prompt_tokens": 12, "completion_tokens": 5 } })), Some(json!({ "input_tokens": 12, "output_tokens": 5 })));
+        assert_eq!(claude_usage(&json!({ "choices": [] })), None);
     }
 }

@@ -14,7 +14,7 @@
   let activeView = $state('providers'); // 'providers' | 'provider-detail' | 'endpoint' | 'combos' | 'usage' | 'quota' | 'token-saver' | 'cli-tools' | 'translator' | 'skills' | 'media' | 'proxy-pools' | 'console-log' | 'settings'
   let selectedProviderId = $state('antigravity');
   let theme = $state('dark');
-  let version = $state('v0.0.21 (Rust)');
+  let version = $state('v0.5.111 (Rust)');
   let mediaOpen = $state(false);
 
   // Data collections
@@ -23,6 +23,9 @@
   let apiKeys = $state([]);
   let proxyPools = $state([]);
   let quotaItems = $state([]);
+  let quotaLoading = $state(false);
+  let quotaError = $state('');
+  let quotaLastUpdated = $state('');
   let connectionModels = $state([]);
   let usageStats = $state({
     totalRequests: 0,
@@ -44,6 +47,20 @@
   });
   let cliStatuses = $state({});
   let consoleLogs = $state([]);
+  let usageTab = $state('overview'); // 'overview' | 'details' | 'logs'
+  let usagePeriod = $state('all');
+  let usageBreakdown = $state([]);
+  let usageLogs = $state([]);
+  let usageChart = $state([]);
+  let usageDetails = $state([]);
+  let usageDetailsPage = $state(1);
+  let usageDetailsPagination = $state({ page: 1, pageSize: 200, totalItems: 0, totalPages: 0, hasNext: false, hasPrev: false });
+  let usageLoading = $state(false);
+  let usageError = $state('');
+  let usageDetailsError = $state('');
+  let selectedCliTool = $state(null);
+  let quotaFilter = $state('all'); // 'all' | 'active'
+  let quotaProviderFilter = $state('all');
 
   // Search & Filters for Providers
   let providerSearch = $state('');
@@ -52,7 +69,7 @@
   // Search & Filters for Skills
   let skillSearch = $state('');
   let skillCategory = $state('all');
-  let skillSource = $state('curated'); // 'curated' | 'github'
+  let skillSource = $state('github'); // 'curated' | 'github'
   let githubResults = $state([]);
   let githubTotal = $state(0);
   let githubPage = $state(1);
@@ -235,6 +252,7 @@
     loadKeys();
     loadQuota();
     loadUsage();
+    loadUsageDetails();
     loadSettings();
     loadCliStatuses();
   }
@@ -280,18 +298,65 @@
   }
 
   async function loadQuota() {
+    quotaLoading = true;
     try {
       const res = await fetch('/api/quota');
-      const json = await res.json();
-      quotaItems = json.data || [];
-    } catch {}
+      if (!res.ok) throw new Error(`Quota list request failed (${res.status})`);
+      const list = await res.json();
+      quotaItems = list.data || [];
+      quotaLastUpdated = new Date().toLocaleTimeString();
+      quotaError = '';
+    } catch (error) {
+      quotaError = error.message || 'Quota data could not be loaded.';
+    } finally {
+      quotaLoading = false;
+    }
   }
 
   async function loadUsage() {
     try {
-      const res = await fetch('/api/usage/stats');
+      const res = await fetch(`/api/usage/stats?period=${usagePeriod}`);
+      if (!res.ok) throw new Error(`Usage stats request failed (${res.status})`);
       usageStats = await res.json();
-    } catch {}
+      usageError = '';
+    } catch (error) {
+      usageError = error.message || 'Usage stats could not be loaded.';
+    }
+  }
+
+  async function loadUsageDetails() {
+    usageLoading = true;
+    try {
+      const suffix = `?period=${usagePeriod}`;
+      const [histRes, chartRes, logsRes, detailsRes] = await Promise.all([
+        fetch(`/api/usage/history${suffix}`),
+        fetch(`/api/usage/chart${suffix}`),
+        fetch(`/api/usage/logs${suffix}`),
+        fetch(`/api/usage/request-details${suffix}&page=${usageDetailsPage}&pageSize=200`)
+      ]);
+      for (const response of [histRes, chartRes, logsRes, detailsRes]) {
+        if (!response.ok) throw new Error(`Usage details request failed (${response.status})`);
+      }
+      const [hist, chart, logs, details] = await Promise.all([
+        histRes.json(), chartRes.json(), logsRes.json(), detailsRes.json()
+      ]);
+      usageBreakdown = hist.breakdown || [];
+      usageChart = chart.points || [];
+      usageLogs = logs.logs || [];
+      usageDetails = details.details || [];
+      usageDetailsPagination = details.pagination;
+      usageDetailsError = '';
+    } catch (error) {
+      usageDetailsError = error.message || 'Usage details could not be loaded.';
+    } finally {
+      usageLoading = false;
+    }
+  }
+
+  async function loadUsageForPeriod(period) {
+    usagePeriod = period;
+    usageDetailsPage = 1;
+    await Promise.all([loadUsage(), loadUsageDetails()]);
   }
 
   async function loadSettings() {
@@ -531,6 +596,7 @@
   // -------------------------------------------------------------
   function setView(view) {
     activeView = view;
+    if (typeof window !== 'undefined') window.location.hash = view;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -547,6 +613,15 @@
   onMount(() => {
     checkAuthStatus();
     loadAllData();
+    searchGitHubSkills('agent-skills');
+
+    const initialHash = window.location.hash.replace('#', '');
+    if (initialHash) activeView = initialHash;
+    const onHashChange = () => {
+      const h = window.location.hash.replace('#', '');
+      if (h) activeView = h;
+    };
+    window.addEventListener('hashchange', onHashChange);
 
     function handleOAuthMessage(event) {
       if (event.data?.type === 'oauth_callback' && event.data?.data) {
@@ -611,6 +686,11 @@
   <div class="app-shell">
     <!-- SIDEBAR -->
     <aside>
+      <div class="traffic-lights">
+        <div class="traffic-light" style="background: #FF5F56;"></div>
+        <div class="traffic-light" style="background: #FFBD2E;"></div>
+        <div class="traffic-light" style="background: #27C93F;"></div>
+      </div>
       <div class="brand">
         <div class="brand-title">
           <div class="brand-logo">9</div>
@@ -731,13 +811,13 @@
             <p class="muted">Fallback chains, smart routing, round-robin pools and format conversions</p>
           {:else if activeView === 'usage'}
             <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">bar_chart</span> Usage Analytics</h1>
-            <p class="muted">Live traffic telemetry, prompt/completion token metrics and cost estimates</p>
+            <p class="muted">Recorded gateway requests, token counts, and costs</p>
           {:else if activeView === 'quota'}
             <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">data_usage</span> Quota Tracker</h1>
-            <p class="muted">Real-time quota monitoring, token limits and reset countdown timers</p>
+            <p class="muted">Quota values and reset times returned by connected providers</p>
           {:else if activeView === 'token-saver'}
-            <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">savings</span> Token Saver</h1>
-            <p class="muted">Built-in Headroom Context Compression, RTK filtering and Caveman summarization</p>
+            <h1><span class="material-symbols-outlined" style="color:#f97316;font-size:26px;">bolt</span> Token Saver</h1>
+            <p class="muted">Compress prompts and outputs to save tokens</p>
           {:else if activeView === 'cli-tools'}
             <h1><span class="material-symbols-outlined" style="color:var(--mint);font-size:26px;">terminal</span> CLI Tools</h1>
             <p class="muted">Automated setup and proxy configs for Claude Code, Codex, Copilot, Cursor and Cline</p>
@@ -1061,16 +1141,38 @@
             {/if}
           </div>
 
-          <!-- MODELS SECTION (ONLY RENDERED WHEN AT LEAST ONE CONNECTION IS CONNECTED) -->
+          <!-- MODELS SECTION -->
+          {#if getProviderConnections(selectedProvider.id).length === 0}
             <div class="card">
               <div class="card-header">
-                <h3 style="font-size: 16px;">Models ({providerModels.length})</h3>
+                <h3 style="font-size: 16px;">Available Models</h3>
+              </div>
+              <div style="text-align: center; padding: 24px; color: var(--muted);">
+                <span class="material-symbols-outlined" style="font-size: 32px; margin-bottom: 8px; display: block;">link_off</span>
+                Add a connection to enable importing models.
+              </div>
+              <div style="text-align: center; padding-bottom: 16px;">
+                <button class="sm" disabled style="opacity: 0.5;"><span class="material-symbols-outlined" style="font-size:16px;">download</span> Import from /models</button>
+              </div>
+            </div>
+          {:else}
+            <div class="card">
+              <div class="card-header">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <h3 style="font-size: 16px;">Available Models ({providerModels.length})</h3>
+                  <select style="width: 160px; font-size: 12px; padding: 4px 8px;" onchange={(e) => updateTokenSaver({ thinking: e.target.value })}>
+                    <option value="auto">Thinking: Auto</option>
+                    <option value="high">Thinking: High</option>
+                    <option value="medium">Thinking: Medium</option>
+                    <option value="low">Thinking: Low</option>
+                    <option value="off">Thinking: Off</option>
+                  </select>
+                </div>
                 <button class="sm" onclick={() => { modalType = 'add-model'; modalData = {}; }}>
                   <span class="material-symbols-outlined" style="font-size:16px;">add</span>
                   Add Model
                 </button>
               </div>
-
               <div style="display: flex; flex-direction: column; gap: 8px;">
                 {#each providerModels as model (model.id)}
                   <div class="model-row-item">
@@ -1081,7 +1183,6 @@
                         <div class="model-id-pill"><code>{model.id}</code></div>
                       </div>
                     </div>
-
                     <div style="display: flex; align-items: center; gap: 8px;">
                       <button class="ghost sm" onclick={() => copyText(model.id)} title="Copy Model ID" aria-label="Copy model ID">
                         <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span>
@@ -1095,6 +1196,7 @@
                 {/each}
               </div>
             </div>
+          {/if}
 
         <!-- VIEW 3: ENDPOINT & KEY -->
         {:else if activeView === 'endpoint'}
@@ -1248,115 +1350,235 @@
 
         <!-- VIEW 5: USAGE ANALYTICS -->
         {:else if activeView === 'usage'}
-          <div class="kpi-grid">
-            <div class="kpi-card">
-              <div class="kpi-label">Total Requests</div>
-              <div class="kpi-val">{usageStats.totalRequests || 0}</div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-label">Input Tokens</div>
-              <div class="kpi-val">{(usageStats.totalPromptTokens || 0).toLocaleString()}</div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-label">Output Tokens</div>
-              <div class="kpi-val">{(usageStats.totalCompletionTokens || 0).toLocaleString()}</div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-label">Cached Tokens</div>
-              <div class="kpi-val">523,120</div>
-            </div>
-            <div class="kpi-card">
-              <div class="kpi-label">Estimated Cost</div>
-              <div class="kpi-val" style="color:var(--mint);">${(usageStats.totalCost || 0.39).toFixed(3)}</div>
-            </div>
+          <div class="usage-tabs">
+            <button class="usage-tab" class:active={usageTab === 'overview'} onclick={() => usageTab = 'overview'}>Overview</button>
+            <button class="usage-tab" class:active={usageTab === 'details'} onclick={() => usageTab = 'details'}>Details</button>
+            <button class="usage-tab" class:active={usageTab === 'logs'} onclick={() => usageTab = 'logs'}>Logs</button>
           </div>
 
-          <div class="card">
-            <div class="card-header">
-              <h3>Live Gateway Traffic Flow</h3>
-              <span class="badge active">Live Axum 0.8 Engine</span>
-            </div>
-            <div style="padding: 20px; background: rgba(0,0,0,0.2); border-radius: 8px; text-align: center;">
-              <div style="display: flex; justify-content: space-around; align-items: center;">
-                <div>
-                  <div style="font-weight: 600;">Client App / IDE</div>
-                  <div class="muted">Claude Code, Codex, Cursor</div>
-                </div>
-                <span class="material-symbols-outlined" style="color:var(--mint);">trending_flat</span>
-                <div>
-                  <div style="font-weight: 600; color:var(--mint);">9Router Rust Gateway</div>
-                  <div class="muted">Headroom + Smart Routing</div>
-                </div>
-                <span class="material-symbols-outlined" style="color:var(--mint);">trending_flat</span>
-                <div>
-                  <div style="font-weight: 600;">Upstream Provider</div>
-                  <div class="muted">Anthropic, OpenAI, Gemini</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        <!-- VIEW 6: QUOTA TRACKER -->
-        {:else if activeView === 'quota'}
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: gap: 10px;">
-            <div style="display: flex; gap: 8px;">
-              <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">hourglass_top</span> Expiring first</button>
-              <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">block</span> Turn off Empty</button>
-              <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">check_circle</span> Turn on Available</button>
-            </div>
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <span class="muted" style="font-size: 12px;">Auto-refresh (59s)</span>
-              <button class="ghost sm" onclick={loadQuota} aria-label="Refresh quota"><span class="material-symbols-outlined" style="font-size:18px;">refresh</span></button>
-            </div>
-          </div>
-
-          <div class="grid">
-            {#each quotaItems as item (item.id)}
-              <div class="card" style="padding: 16px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                  <div style="font-weight: 600; font-size: 14px;">{item.name}</div>
-                  <span class="badge {item.status === 'healthy' ? 'healthy' : 'warn'}">{item.status}</span>
-                </div>
-
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                  <div>
-                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                      <span class="muted">Requests Remaining</span>
-                      <span>{item.requests_remaining} / {item.requests_limit}</span>
-                    </div>
-                    <div style="height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden;">
-                      <div style="width: {100 - item.percent_used}%; height: 100%; background: var(--mint);"></div>
-                    </div>
-                  </div>
-
-                  <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px;">
-                    <span>Reset countdown</span>
-                    <span style="font-weight: 600; color: var(--text-strong);">{item.reset_countdown}</span>
-                  </div>
-                </div>
-              </div>
+          <div class="period-pills">
+            {#each ['today','24h','7d','30d','60d','all'] as p}
+              <button class="period-pill" class:active={usagePeriod === p} onclick={() => loadUsageForPeriod(p)}>{p === 'today' ? 'Today' : p.toUpperCase()}</button>
             {/each}
           </div>
 
+          {#if usageError || usageDetailsError}
+            <p class="notice-banner warn" role="alert">{[usageError, usageDetailsError].filter(Boolean).join(' ')}</p>
+          {/if}
+          {#if usageLoading}
+            <p class="muted" role="status">Loading usage for {usagePeriod}…</p>
+          {/if}
+
+          {#if usageTab === 'overview'}
+            <div class="kpi-grid">
+              <div class="kpi-card">
+                <div class="kpi-label">Total Requests</div>
+                <div class="kpi-val">{(usageStats.totalRequests || 0).toLocaleString()}</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-label">Input Tokens</div>
+                <div class="kpi-val">{usageStats.totalPromptTokens == null ? '—' : usageStats.totalPromptTokens.toLocaleString()}</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-label">Output Tokens</div>
+                <div class="kpi-val">{usageStats.totalCompletionTokens == null ? '—' : usageStats.totalCompletionTokens.toLocaleString()}</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-label">Recorded Cost</div>
+                <div class="kpi-val" style="color:var(--mint);">{usageStats.totalCost == null ? '—' : `$${usageStats.totalCost.toFixed(3)}`}</div>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top: 16px;">
+              <div class="card-header"><h3>Requests by time</h3></div>
+              {#if usageChart.length === 0}
+                <p class="muted" style="padding: 16px;">No recorded requests in this period.</p>
+              {:else}
+                <div style="padding: 16px; display: flex; gap: 4px; align-items: flex-end; height: 120px;">
+                  {#each usageChart as point}
+                    <div style="flex: 1; min-width: 2px; background: var(--mint); height: {(point.requests / Math.max(1, ...usageChart.map(item => item.requests))) * 100}%" title="{point.timestamp}: {point.requests} requests, {point.tokens == null ? 'token total unavailable' : `${point.tokens} tokens`}"></div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <div class="card" style="margin-top: 16px;">
+              <div class="card-header"><h3>Provider / Model Breakdown</h3></div>
+              {#if usageBreakdown.length === 0}
+                <p class="muted" style="padding: 16px;">No recorded provider or model usage in this period.</p>
+              {:else}
+                <div style="overflow-x: auto;">
+                  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                    <thead>
+                      <tr style="border-bottom: 1px solid var(--border); color: var(--muted); text-align: left;">
+                        <th style="padding: 8px 12px;">Model / Provider</th>
+                        <th style="padding: 8px 12px;">Requests</th>
+                        <th style="padding: 8px 12px;">Input Tokens</th>
+                        <th style="padding: 8px 12px;">Output Tokens</th>
+                        <th style="padding: 8px 12px;">Total Tokens</th>
+                        <th style="padding: 8px 12px;">Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {#each usageBreakdown as row}
+                        <tr style="border-bottom: 1px solid var(--border);">
+                          <td style="padding: 8px 12px;"><strong>{row.model}</strong> <span class="muted" style="font-size:11px;">{row.provider}</span></td>
+                          <td style="padding: 8px 12px;">{row.requests.toLocaleString()}</td>
+                          <td style="padding: 8px 12px;">{row.inputTokens == null ? '—' : row.inputTokens.toLocaleString()}</td>
+                          <td style="padding: 8px 12px;">{row.outputTokens == null ? '—' : row.outputTokens.toLocaleString()}</td>
+                          <td style="padding: 8px 12px;">{row.totalTokens == null ? '—' : row.totalTokens.toLocaleString()}</td>
+                          <td style="padding: 8px 12px; color: var(--mint);">{row.cost == null ? '—' : `$${row.cost.toFixed(3)}`}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              {/if}
+            </div>
+          {:else if usageTab === 'details'}
+            <div class="card">
+              <div class="card-header"><h3>Request Details</h3></div>
+              {#if usageDetails.length === 0}
+                <p class="muted" style="padding: 16px;">No persisted request records in this period.</p>
+              {:else}
+                <div style="overflow-x: auto;">
+                  <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                    <thead><tr><th>Time</th><th>Provider</th><th>Model</th><th>Input</th><th>Output</th><th>Cost</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {#each usageDetails as request}
+                        <tr>
+                          <td>{request.timestamp}</td><td>{request.provider || 'Unknown'}</td><td>{request.model || 'Unknown'}</td>
+                          <td>{request.promptTokens == null ? '—' : request.promptTokens.toLocaleString()}</td><td>{request.completionTokens == null ? '—' : request.completionTokens.toLocaleString()}</td>
+                          <td>{request.cost == null ? '—' : `$${request.cost.toFixed(3)}`}</td><td>{request.status || 'unknown'}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              {/if}
+              {#if usageDetailsPagination.totalPages > 1}
+                <div class="quota-toolbar" aria-label="Request page controls">
+                  <span class="muted">Page {usageDetailsPagination.page} of {usageDetailsPagination.totalPages} ({usageDetailsPagination.totalItems} requests)</span>
+                  <div class="quota-filters">
+                    <button class="sm" disabled={!usageDetailsPagination.hasPrev} onclick={() => { usageDetailsPage -= 1; loadUsageDetails(); }}>Previous</button>
+                    <button class="sm" disabled={!usageDetailsPagination.hasNext} onclick={() => { usageDetailsPage += 1; loadUsageDetails(); }}>Next</button>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {:else if usageTab === 'logs'}
+            <div class="card">
+              <div class="card-header"><h3>Gateway Logs</h3></div>
+              <div style="background: #000; border-radius: 8px; padding: 14px; font-family: 'JetBrains Mono', monospace; font-size: 12px; max-height: 400px; overflow-y: auto;">
+                {#if usageLogs.length === 0}
+                  <div class="muted">No persisted request logs in this period.</div>
+                {/if}
+                {#each usageLogs as log}
+                  <div style="color: #94a3b8;">{log}</div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
+        <!-- VIEW 6: QUOTA TRACKER -->
+        {:else if activeView === 'quota'}
+          <div class="quota-toolbar">
+            <div class="quota-filters">
+              <select bind:value={quotaProviderFilter} aria-label="Filter quotas by provider">
+                <option value="all">All providers</option>
+                {#each [...new Set(quotaItems.map(item => item.provider))] as provider}
+                  <option value={provider}>{provider}</option>
+                {/each}
+              </select>
+              <button class="period-pill" class:active={quotaFilter === 'all'} onclick={() => quotaFilter = 'all'}>All</button>
+              <button class="period-pill" class:active={quotaFilter === 'active'} onclick={() => quotaFilter = 'active'}>Active</button>
+            </div>
+            <div class="quota-refresh">
+              <span class="muted" aria-live="polite">{quotaLoading ? 'Refreshing quotas…' : quotaLastUpdated ? `Updated ${quotaLastUpdated}` : 'Not refreshed yet'}</span>
+              <button class="ghost sm" onclick={loadQuota} aria-label="Refresh quota" disabled={quotaLoading}>
+                <span class="material-symbols-outlined" style="font-size:18px;">refresh</span>
+              </button>
+            </div>
+          </div>
+          {#if quotaError}
+            <p class="notice-banner warn" role="alert">{quotaError}</p>
+          {/if}
+          {#if quotaLoading && quotaItems.length === 0}
+            <p class="muted" role="status">Loading saved provider quotas…</p>
+          {:else if quotaItems.length === 0}
+            <p class="muted" style="padding: 24px 8px;">No saved provider connections. Add a connection to check its quota.</p>
+          {:else}
+            <div class="grid quota-grid">
+              {#each quotaItems.filter(item => (quotaProviderFilter === 'all' || item.provider === quotaProviderFilter) && (quotaFilter !== 'active' || item.is_active)) as item (item.id)}
+                <article class="card quota-card">
+                  <header class="quota-account">
+                    <div>
+                      <strong>{item.email || item.name || item.provider}</strong>
+                      <div class="muted">{item.provider}{item.is_active ? ' · Enabled' : ' · Disabled'}</div>
+                    </div>
+                    {#if item.plan}<span class="badge">{item.plan}</span>{/if}
+                  </header>
+                  {#if item.message}
+                    <p class="quota-message" role="status">{item.message}</p>
+                  {/if}
+                  {#if Object.entries(item.quotas || {}).length}
+                    <div class="quota-values">
+                      {#each Object.entries(item.quotas) as [key, quota]}
+                        <section class="quota-row">
+                          <div class="quota-row-title">
+                            <strong>{quota.displayName || key}</strong>
+                            {#if quota.remainingPercentage != null}
+                              <span>{quota.remainingPercentage.toFixed(1)}% remaining</span>
+                            {/if}
+                          </div>
+                          {#if quota.resetAt}
+                            <div class="muted">Resets <time datetime={quota.resetAt}>{new Date(quota.resetAt).toLocaleString()}</time></div>
+                          {/if}
+                        </section>
+                      {/each}
+                    </div>
+                  {:else if !item.message}
+                    <p class="muted">Provider returned no quota values.</p>
+                  {/if}
+                </article>
+              {/each}
+            </div>
+          {/if}
         <!-- VIEW 7: TOKEN SAVER -->
         {:else if activeView === 'token-saver'}
           <div class="card">
             <div class="card-header">
-              <div>
-                <h3 style="font-size: 16px;">Token Saver Engine</h3>
-                <p class="muted" style="margin: 4px 0 0;">Native Rust implementation of Headroom + RTK context compaction</p>
+              <div style="display: flex; align-items: center; gap: 10px;">
+                <span class="material-symbols-outlined" style="color: #f97316; font-size: 22px;">bolt</span>
+                <div>
+                  <h3 style="font-size: 16px;">Token Saver</h3>
+                  <p class="muted" style="margin: 2px 0 0;">Compress prompts and outputs to save tokens</p>
+                </div>
               </div>
-              <span class="badge active">Compression Active</span>
             </div>
 
-            <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div style="display: flex; flex-direction: column; gap: 14px;">
               <div class="connection-item">
                 <div>
-                  <div style="font-weight: 600;">Compress context (Headroom)</div>
-                  <div class="muted" style="font-size: 12px;">Lossless syntax-aware ast-edit, diff and smart crusher</div>
+                  <div style="font-weight: 600;">Compress tool output (RTK)</div>
+                  <div class="muted" style="font-size: 12px;">git/grep/ls/tree/logs: 60-90% fewer input tokens</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" checked={settings.rtkEnabled} onchange={(e) => updateTokenSaver({ rtk: e.target.checked })} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="connection-item">
+                <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+                  <div>
+                    <div style="font-weight: 600;">Compress context (Headroom)</div>
+                    <div class="muted" style="font-size: 12px;">Compress prompts via /v1/compress before routing to the model</div>
+                  </div>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px;">
                   <span class="badge healthy">Running</span>
+                  <a href="http://127.0.0.1:8787" target="_blank" rel="noopener noreferrer" style="font-size:12px; color:var(--mint);">Manage</a>
                   <label class="switch">
                     <input type="checkbox" checked={settings.headroomEnabled} onchange={(e) => updateTokenSaver({ headroom: e.target.checked })} />
                     <span class="slider"></span>
@@ -1366,62 +1588,99 @@
 
               <div class="connection-item">
                 <div>
-                  <div style="font-weight: 600;">Compress tool output (RTK)</div>
-                  <div class="muted" style="font-size: 12px;">Strips redundant ANSI escapes, debug banners, and whitespace</div>
-                </div>
-                <label class="switch">
-                  <input type="checkbox" checked={settings.rtkEnabled} onchange={(e) => updateTokenSaver({ rtk: e.target.checked })} />
-                  <span class="slider"></span>
-                </label>
-              </div>
-
-              <div class="connection-item">
-                <div>
                   <div style="font-weight: 600;">Compress LLM output (Caveman)</div>
-                  <div class="muted" style="font-size: 12px;">Eliminates conversational filler and sycophantic preamble</div>
+                  <div class="muted" style="font-size: 12px;">Terse-style system prompt: ~65% fewer output tokens (up to 87%)</div>
                 </div>
                 <label class="switch">
-                  <input type="checkbox" checked />
+                  <input type="checkbox" checked={!!settings.cavemanLevel && settings.cavemanLevel !== 'off'} onchange={(e) => updateTokenSaver({ caveman: e.target.checked })} />
                   <span class="slider"></span>
                 </label>
               </div>
 
               <div class="connection-item">
                 <div>
-                  <div style="font-weight: 600;">Lazy senior developer (Ponytail Mode)</div>
-                  <div class="muted" style="font-size: 12px;">Aggressive YAGNI pruning and minimal diff enforcement</div>
+                  <div style="font-weight: 600;">Lazy senior dev (Ponytail)</div>
+                  <div class="muted" style="font-size: 12px;">Bias the model toward minimal code: YAGNI, reuse stdlib, deletion over addition</div>
                 </div>
-                <select style="width: 140px;" bind:value={settings.ponytailLevel} onchange={() => updateTokenSaver({ ponytail: settings.ponytailLevel })}>
-                  <option value="lite">Lite</option>
-                  <option value="full">Full</option>
-                  <option value="ultra">Ultra</option>
-                </select>
+                <label class="switch">
+                  <input type="checkbox" checked={!!settings.ponytailLevel && settings.ponytailLevel !== 'off'} onchange={(e) => updateTokenSaver({ ponytail: e.target.checked })} />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="connection-item">
+                <div>
+                  <div style="font-weight: 600;">Custom system prompt</div>
+                  <div class="muted" style="font-size: 12px;">Appends your own instruction to every request, independently of the savers above</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" />
+                  <span class="slider"></span>
+                </label>
               </div>
             </div>
           </div>
 
         <!-- VIEW 8: CLI TOOLS -->
         {:else if activeView === 'cli-tools'}
-          <div class="grid">
-            {#each Object.entries(cliStatuses) as [key, tool]}
-              <div class="card" style="padding: 16px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                  <div style="font-weight: 600; text-transform: capitalize;">{key}</div>
-                  <span class="badge {tool.installed ? 'active' : ''}">{tool.installed ? 'Configured' : 'Not installed'}</span>
+          <div class="grid" style="grid-template-columns: repeat(3, 1fr);">
+            {#each (Array.isArray(cliStatuses) ? cliStatuses : Object.entries(cliStatuses).map(([key, tool]) => ({key, ...tool}))) as tool (tool.key)}
+              <div class="cli-tool-card" onclick={() => selectedCliTool = selectedCliTool?.key === tool.key ? null : tool} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') selectedCliTool = selectedCliTool?.key === tool.key ? null : tool; }}>
+                <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                  <span class="material-symbols-outlined" style="font-size: 18px; color: var(--mint);">{tool.icon || 'terminal'}</span>
                 </div>
-                <p class="muted" style="font-size: 12px; margin-bottom: 12px;">{tool.message}</p>
-                <div style="display: flex; gap: 8px;">
-                  <button class="sm" onclick={() => copyText(`export OPENAI_BASE_URL="http://localhost:20129/v1"`)}>
-                    <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span> Config
-                  </button>
-                  <button class="ghost sm" onclick={() => alert(`Setup instructions for ${key}: point BASE_URL to http://localhost:20129/v1`)}>
-                    <span class="material-symbols-outlined" style="font-size:16px;">help</span> Guide
-                  </button>
+                <div style="flex: 1; min-width: 0;">
+                  <div style="font-weight: 600; font-size: 13.5px;">{tool.name || tool.key}</div>
+                  <span class="status-pill {tool.status || (tool.installed ? 'connected' : 'not-installed')}">{tool.status === 'connected' ? 'Connected' : tool.status === 'guide' ? 'Guide' : tool.status === 'not-configured' ? 'Not configured' : tool.installed ? 'Connected' : 'Not installed'}</span>
                 </div>
+                <span class="material-symbols-outlined" style="font-size: 18px; color: var(--muted);">chevron_right</span>
               </div>
             {/each}
           </div>
 
+          {#if selectedCliTool}
+            <div class="card" style="margin-top: 16px;">
+              <div class="card-header">
+                <h3>{selectedCliTool.name || selectedCliTool.key} Configuration</h3>
+                <button class="ghost sm" onclick={() => selectedCliTool = null}><span class="material-symbols-outlined">close</span></button>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 14px;">
+                <div>
+                  <div class="muted" style="font-size: 12px; margin-bottom: 4px;">Status</div>
+                  <span class="status-pill {selectedCliTool.status || (selectedCliTool.installed ? 'connected' : 'not-installed')}">{selectedCliTool.message}</span>
+                </div>
+                {#if selectedCliTool.configCommand}
+                  <div>
+                    <div class="muted" style="font-size: 12px; margin-bottom: 4px;">Configuration Command</div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      <code style="flex: 1; padding: 8px 12px; font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{selectedCliTool.configCommand}</code>
+                      <button class="sm" onclick={() => copyText(selectedCliTool.configCommand)}><span class="material-symbols-outlined" style="font-size:16px;">content_copy</span></button>
+                    </div>
+                  </div>
+                {/if}
+                {#if selectedCliTool.envVars && Object.keys(selectedCliTool.envVars).length > 0}
+                  <div>
+                    <div class="muted" style="font-size: 12px; margin-bottom: 4px;">Environment Variables</div>
+                    {#each Object.entries(selectedCliTool.envVars) as [k, v]}
+                      <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
+                        <code style="flex: 1; padding: 6px 10px; font-size: 11.5px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;">export {k}="{v}"</code>
+                        <button class="ghost sm" onclick={() => copyText(`export ${k}="${v}"`)}><span class="material-symbols-outlined" style="font-size:14px;">content_copy</span></button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+                {#if selectedCliTool.installGuide}
+                  <div>
+                    <div class="muted" style="font-size: 12px; margin-bottom: 4px;">Install Guide</div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                      <code style="flex: 1; padding: 8px 12px; font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;">{selectedCliTool.installGuide}</code>
+                      <button class="sm" onclick={() => copyText(selectedCliTool.installGuide)}><span class="material-symbols-outlined" style="font-size:16px;">content_copy</span></button>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/if}
         <!-- VIEW 9: TRANSLATOR WORKBENCH -->
         {:else if activeView === 'translator'}
           <div class="card">
@@ -1476,15 +1735,9 @@
         {:else if activeView === 'skills'}
           <div style="display: flex; flex-direction: column; gap: 14px;">
             <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-              <div style="display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">
-                <button class={skillSource === 'curated' ? 'sm primary' : 'sm ghost'} onclick={() => { skillSource = 'curated'; skillCategory = 'all'; }}>
-                  <span class="material-symbols-outlined" style="font-size: 15px;">star</span>
-                  Curated ({agentSkillsList.length})
-                </button>
-                <button class={skillSource === 'github' ? 'sm primary' : 'sm ghost'} onclick={() => { skillSource = 'github'; skillCategory = 'all'; if (!githubResults.length) searchGitHubSkills(''); }}>
-                  <span class="material-symbols-outlined" style="font-size: 15px;">language</span>
-                  GitHub Live ({githubTotal.toLocaleString()})
-                </button>
+              <div style="display: flex; gap: 4px; background: var(--panel-2); border-radius: 6px; padding: 2px;">
+                <button class="sm" style="border: none; border-radius: 4px; {skillSource === 'github' ? 'background: var(--mint); color: #000; font-weight: 600;' : 'background: transparent; color: var(--muted);'}" onclick={() => { skillSource = 'github'; if (githubResults.length === 0) searchGitHubSkills('agent-skills'); }}>GitHub Live</button>
+                <button class="sm" style="border: none; border-radius: 4px; {skillSource === 'curated' ? 'background: var(--mint); color: #000; font-weight: 600;' : 'background: transparent; color: var(--muted);'}" onclick={() => skillSource = 'curated'}>Curated ({agentSkillsList.length})</button>
               </div>
 
               {#if skillSource === 'github'}
