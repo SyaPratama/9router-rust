@@ -38,6 +38,7 @@ pub(crate) fn record_usage(
     let (prompt_tokens, completion_tokens, cost) = body.map(usage_metrics).unwrap_or((None, None, None));
     let record = UsageRecord {
         timestamp: chrono::Utc::now().to_rfc3339(),
+        id: None,
         provider: Some(provider),
         model: Some(model),
         connection_id,

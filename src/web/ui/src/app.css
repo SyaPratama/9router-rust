@@ -2,6 +2,25 @@
  * 9Router Design System - Obsidian Dark & Clean Light Theme
  * 100% Parity with Original 9Router Web Dashboard
  */
+@import "tailwindcss";
+
+@theme inline {
+  --color-canvas: var(--bg);
+  --color-surface: var(--panel);
+  --color-surface-muted: var(--panel-2);
+  --color-line: var(--border);
+  --color-copy: var(--text-strong);
+  --color-copy-muted: var(--muted);
+  --color-copy-subtle: var(--muted-dark);
+  --color-accent: var(--mint);
+  --color-warning: var(--warning);
+  --color-accent-bright: var(--mint-bright);
+  --animate-route-flow: route-flow 1.3s ease-out 1;
+
+  @keyframes route-flow {
+    to { stroke-dashoffset: -64; }
+  }
+}
 
 :root {
   color-scheme: dark;
@@ -180,7 +199,7 @@ main { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,0.2) transparent
 }
 .period-pills {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
 }
 .period-pill {
   padding: 4px 12px;
@@ -254,6 +273,20 @@ aside .brand {
   font-weight: 600;
 }
 
+.mobile-menu-toggle {
+  display: none;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  color: var(--text-strong);
+}
+
 aside nav {
   padding: 10px;
   display: flex;
@@ -287,6 +320,8 @@ aside nav button, .nav-item {
   cursor: pointer;
   transition: all 0.15s ease;
   text-decoration: none;
+  justify-content: flex-start;
+
 }
 
 aside nav button:hover, .nav-item:hover {
@@ -304,6 +339,8 @@ aside nav button.active, .nav-item.active {
 aside nav button.active .material-symbols-outlined {
   color: var(--mint);
 }
+
+aside nav button.active svg { color: var(--mint); }
 
 button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--text-strong);
@@ -1129,7 +1166,10 @@ aside nav button:focus-visible, aside .nav-item:focus-visible { position: relati
 /* RESPONSIVE */
 @media (max-width: 800px) {
   .app-shell { flex-direction: column; }
-  aside { width: 100%; max-height: 44vh; position: static; }
+  aside { width: 100%; max-height: none; position: static; }
+  .mobile-menu-toggle { display: inline-flex; }
+  aside nav { display: none; max-height: 50dvh; overflow-y: auto; }
+  aside nav.mobile-open { display: flex; }
   main { padding: 16px; }
   .page-header { padding: 16px; flex-direction: column; align-items: flex-start; }
   .quota-toolbar { align-items: stretch; }

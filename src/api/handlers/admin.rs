@@ -966,11 +966,36 @@ pub async fn toggle_headroom(
     if let Some(r) = payload.get("rtk").and_then(|v| v.as_bool()) {
         settings.rtk_enabled = r;
     }
-    if let Some(c) = payload.get("caveman").and_then(|v| v.as_str()) {
-        settings.caveman_level = Some(c.to_string());
+    if let Some(c) = payload.get("caveman") {
+        if let Some(b) = c.as_bool() {
+            settings.caveman_level = if b { Some("auto".to_string()) } else { None };
+        } else if let Some(s) = c.as_str() {
+            settings.caveman_level = Some(s.to_string());
+        }
     }
-    if let Some(p) = payload.get("ponytail").and_then(|v| v.as_str()) {
-        settings.ponytail_level = Some(p.to_string());
+    if let Some(p) = payload.get("ponytail") {
+        if let Some(b) = p.as_bool() {
+            settings.ponytail_level = if b { Some("ultra".to_string()) } else { None };
+        } else if let Some(s) = p.as_str() {
+            settings.ponytail_level = Some(s.to_string());
+        }
+    }
+    if let Some(cp) = payload.get("custom_prompt").or_else(|| payload.get("customPrompt")) {
+        match cp {
+            serde_json::Value::Null => {
+                settings.extra.remove("custom_prompt");
+                settings.extra.remove("customPrompt");
+            }
+            serde_json::Value::Bool(b) => {
+                settings.extra.insert("custom_prompt_enabled".to_string(), json!(b));
+            }
+            _ => {
+                settings.extra.insert("custom_prompt".to_string(), cp.clone());
+            }
+        }
+    }
+    if let Some(cpe) = payload.get("custom_prompt_enabled").or_else(|| payload.get("customPromptEnabled")) {
+        settings.extra.insert("custom_prompt_enabled".to_string(), cpe.clone());
     }
 
     SettingsRepo::save(&conn, &settings).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -982,22 +1007,23 @@ pub async fn toggle_headroom(
 // -------------------------------------------------------------
 
 pub async fn get_cli_tool_statuses() -> impl IntoResponse {
-    Json(json!({
-        "claude": { "installed": true, "settings": { "model": "claude-sonnet-4" }, "message": "Ready" },
-        "codex": { "installed": true, "config": { "endpoint": "http://127.0.0.1:20129" }, "message": "Ready" },
-        "opencode": { "installed": true, "config": { "provider": "9router" }, "message": "Ready" },
-        "droid": { "installed": false, "settings": null, "message": "Factory Droid CLI is not installed" },
-        "openclaw": { "installed": true, "settings": { "mode": "native" }, "message": "Ready" },
-        "hermes": { "installed": false, "settings": null, "message": "Hermes Agent is not installed" },
-        "cowork": { "installed": false, "config": null, "message": "Claude Desktop (Cowork mode) not detected" },
-        "cline": { "installed": true, "settings": { "provider": "openai-compatible" }, "message": "Ready" },
-        "kilo": { "installed": false, "settings": null, "message": "Kilo Code is not installed" },
-        "copilot": { "installed": true, "settings": { "auth": "ok" }, "message": "Ready" },
-        "cursor": { "installed": true, "settings": { "model": "custom" }, "message": "Ready" },
-        "windsurf": { "installed": true, "settings": null, "message": "Ready" },
-        "roo": { "installed": true, "settings": null, "message": "Ready" },
-        "grok": { "installed": false, "settings": null, "message": "Grok CLI is not installed" }
-    }))
+    Json(json!([
+        { "key": "claude", "name": "Claude Code", "icon": "code", "installed": true, "status": "connected", "message": "Ready", "configCommand": "claude config set --key api_base_url --value http://localhost:20129/v1", "envVars": { "ANTHROPIC_BASE_URL": "http://localhost:20129/v1" }, "installGuide": "npm install -g @anthropic-ai/claude-code" },
+        { "key": "openclaw", "name": "Open Claw", "icon": "pets", "installed": true, "status": "connected", "message": "Ready", "configCommand": "openclaw config set base_url http://localhost:20129/v1", "envVars": { "OPENAI_BASE_URL": "http://localhost:20129/v1" }, "installGuide": "pip install openclaw" },
+        { "key": "codex", "name": "OpenAI Codex CLI / App", "icon": "terminal", "installed": true, "status": "connected", "message": "Ready", "configCommand": "export OPENAI_BASE_URL=http://localhost:20129/v1", "envVars": { "OPENAI_BASE_URL": "http://localhost:20129/v1", "OPENAI_API_KEY": "sk-9router" }, "installGuide": "npm install -g @openai/codex" },
+        { "key": "copilot", "name": "GitHub Copilot", "icon": "auto_awesome", "installed": true, "status": "connected", "message": "Ready", "configCommand": "gh copilot config", "envVars": {}, "installGuide": "gh extension install github/gh-copilot" },
+        { "key": "opencode", "name": "OpenCode", "icon": "data_object", "installed": true, "status": "connected", "message": "Ready", "configCommand": "opencode config set provider 9router", "envVars": { "OPENAI_BASE_URL": "http://localhost:20129/v1" }, "installGuide": "npm install -g opencode" },
+        { "key": "cowork", "name": "Claude Cowork", "icon": "groups", "installed": false, "status": "not-installed", "message": "Claude Desktop (Cowork mode) not detected", "configCommand": "", "envVars": {}, "installGuide": "Install Claude Desktop from claude.ai/download" },
+        { "key": "hermes", "name": "Hermes Agent", "icon": "smart_toy", "installed": false, "status": "not-installed", "message": "Hermes Agent is not installed", "configCommand": "", "envVars": {}, "installGuide": "pip install hermes-agent" },
+        { "key": "droid", "name": "Factory Droid", "icon": "precision_manufacturing", "installed": false, "status": "not-installed", "message": "Factory Droid CLI is not installed", "configCommand": "", "envVars": {}, "installGuide": "npm install -g factory-droid" },
+        { "key": "cursor", "name": "Cursor", "icon": "mouse", "installed": true, "status": "connected", "message": "Ready", "configCommand": "Set OpenAI Base URL in Cursor Settings > Models", "envVars": { "OPENAI_BASE_URL": "http://localhost:20129/v1" }, "installGuide": "Download from cursor.com" },
+        { "key": "cline", "name": "Cline", "icon": "extension", "installed": true, "status": "connected", "message": "Ready", "configCommand": "Set provider to openai-compatible in Cline settings", "envVars": { "OPENAI_BASE_URL": "http://localhost:20129/v1" }, "installGuide": "Install Cline extension in VS Code" },
+        { "key": "kilo", "name": "Kilo Code", "icon": "speed", "installed": false, "status": "not-installed", "message": "Kilo Code is not installed", "configCommand": "", "envVars": {}, "installGuide": "Install Kilo Code extension in VS Code" },
+        { "key": "roo", "name": "Roo", "icon": "eco", "installed": true, "status": "guide", "message": "Ready", "configCommand": "roo config set endpoint http://localhost:20129/v1", "envVars": {}, "installGuide": "npm install -g roo-code" },
+        { "key": "continue", "name": "Continue", "icon": "play_arrow", "installed": false, "status": "not-installed", "message": "Continue is not installed", "configCommand": "", "envVars": {}, "installGuide": "Install Continue extension in VS Code" },
+        { "key": "amp", "name": "Amp CLI", "icon": "bolt", "installed": false, "status": "not-installed", "message": "Amp CLI is not installed", "configCommand": "", "envVars": {}, "installGuide": "npm install -g @anthropic-ai/amp" },
+        { "key": "windsurf", "name": "Windsurf", "icon": "surfing", "installed": true, "status": "connected", "message": "Ready", "configCommand": "Set base URL in Windsurf settings", "envVars": { "OPENAI_BASE_URL": "http://localhost:20129/v1" }, "installGuide": "Download from windsurf.com" }
+    ]))
 }
 
 // -------------------------------------------------------------
