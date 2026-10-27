@@ -1,6 +1,6 @@
 use axum::extract::Path;
 use axum::http::{header, HeaderValue, StatusCode};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
@@ -20,7 +20,6 @@ pub async fn serve_page(uri: axum::extract::OriginalUri) -> impl IntoResponse {
         _ => "index.html",
     };
 
-    // If dedicated page exists, serve it; otherwise SPA fallback to index.html
     if Asset::get(page).is_some() {
         serve_named_page(page)
     } else {
@@ -30,7 +29,13 @@ pub async fn serve_page(uri: axum::extract::OriginalUri) -> impl IntoResponse {
 
 fn serve_named_page(page: &str) -> Response {
     match Asset::get(page) {
-        Some(content) => Html(content.data.to_vec()).into_response(),
+        Some(content) => (
+            [
+                (header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8")),
+                (header::CACHE_CONTROL, HeaderValue::from_static("no-cache, no-store, must-revalidate")),
+            ],
+            content.data.to_vec(),
+        ).into_response(),
         None => (StatusCode::NOT_FOUND, "Dashboard asset not found").into_response(),
     }
 }
@@ -74,7 +79,10 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
     };
 
     (
-        [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache, no-store, must-revalidate")),
+        ],
         asset.data.to_vec(),
     )
         .into_response()

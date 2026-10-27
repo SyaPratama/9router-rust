@@ -22,6 +22,7 @@
   let apiKeys = $state([]);
   let proxyPools = $state([]);
   let quotaItems = $state([]);
+  let connectionModels = $state([]);
   let usageStats = $state({
     totalRequests: 0,
     totalPromptTokens: 0,
@@ -47,10 +48,11 @@
   let providerSearch = $state('');
   let providerStatusFilter = $state('all'); // 'all' | 'active' | 'inactive' | 'no-connection'
 
-  // Modals
+  // Modals & Popups
   let modalType = $state(null); // 'custom-provider' | 'add-connection' | 'add-model' | 'create-combo' | 'create-key' | 'add-proxy'
   let modalData = $state({});
   let notification = $state(null);
+  let popupWindow = null;
 
   // -------------------------------------------------------------
   // Helpers & Derived State
@@ -87,6 +89,28 @@
       serviceKinds: ['llm']
     }
   );
+
+  let providerModels = $derived.by(() => {
+    const conns = getProviderConnections(selectedProvider.id);
+
+    const customList = [];
+    for (const c of conns) {
+      if (c.data?.models && Array.isArray(c.data.models)) {
+        customList.push(...c.data.models);
+      }
+    }
+
+    const combined = [...connectionModels, ...customList, ...(selectedProvider.models || [])];
+    const seen = new Set();
+    const result = [];
+    for (const m of combined) {
+      if (m && m.id && !seen.has(m.id)) {
+        seen.add(m.id);
+        result.push(m);
+      }
+    }
+    return result;
+  });
 
   let filteredProviders = $derived(
     providerRegistry.filter(p => {
@@ -169,6 +193,22 @@
       const res = await fetch('/api/providers');
       const data = await res.json();
       connections = data.connections || [];
+      if (selectedProviderId) {
+        loadProviderModels(selectedProviderId);
+      }
+    } catch {}
+  }
+
+  async function loadProviderModels(providerId) {
+    connectionModels = [];
+    try {
+      const res = await fetch(`/api/providers/${providerId}/models`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models && Array.isArray(data.models)) {
+          connectionModels = data.models;
+        }
+      }
     } catch {}
   }
 
@@ -218,12 +258,29 @@
   }
 
   // -------------------------------------------------------------
-  // Provider Operations
+  // Provider Operations & OAuth Popups
   // -------------------------------------------------------------
   function openProviderDetail(id) {
     selectedProviderId = id;
     activeView = 'provider-detail';
+    loadProviderModels(id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function openOAuthPopup(url) {
+    if (!url) return;
+    try {
+      popupWindow = window.open(
+        url,
+        '_blank',
+        'width=600,height=700,status=no,toolbar=no,menubar=no,location=yes,resizable=yes'
+      );
+      if (popupWindow && !popupWindow.closed) {
+        popupWindow.focus();
+      }
+    } catch (err) {
+      console.warn('Popup window error or blocked:', err);
+    }
   }
 
   function openAddConnection(providerId) {
@@ -262,6 +319,10 @@
       name: '',
       apiKey: ''
     };
+
+    if (isOAuth) {
+      openOAuthPopup(authUrl);
+    }
   }
 
   function copyAuthUrl(url) {
@@ -318,6 +379,9 @@
         showToast('Connected successfully.');
         loadProviders();
         modalType = null;
+        if (popupWindow && !popupWindow.closed) {
+          try { popupWindow.close(); } catch {}
+        }
       } else {
         showToast('Failed to save connection', 'error');
       }
@@ -390,6 +454,7 @@
         body: JSON.stringify({ id: modelId, name: modelName || modelId })
       });
       showToast('Model added');
+      loadProviderModels(selectedProviderId);
       modalType = null;
     } catch {}
   }
@@ -431,6 +496,21 @@
   onMount(() => {
     checkAuthStatus();
     loadAllData();
+
+    function handleOAuthMessage(event) {
+      if (event.data?.type === 'oauth_callback' && event.data?.data) {
+        const { code, token, fullUrl } = event.data.data;
+        if (modalType === 'add-connection' && modalData) {
+          modalData.callbackUrl = fullUrl || (code ? `${window.location.origin}/callback?code=${code}` : '');
+          handleConnectOAuth();
+        }
+      }
+    }
+
+    window.addEventListener('message', handleOAuthMessage);
+    return () => {
+      window.removeEventListener('message', handleOAuthMessage);
+    };
   });
 </script>
 
@@ -930,40 +1010,40 @@
             {/if}
           </div>
 
-          <!-- MODELS SECTION -->
-          <div class="card">
-            <div class="card-header">
-              <h3 style="font-size: 16px;">Models ({selectedProvider.models?.length || 0})</h3>
-              <button class="sm" onclick={() => { modalType = 'add-model'; modalData = {}; }}>
-                <span class="material-symbols-outlined" style="font-size:16px;">add</span>
-                Add Model
-              </button>
-            </div>
+          <!-- MODELS SECTION (ONLY RENDERED WHEN AT LEAST ONE CONNECTION IS CONNECTED) -->
+            <div class="card">
+              <div class="card-header">
+                <h3 style="font-size: 16px;">Models ({providerModels.length})</h3>
+                <button class="sm" onclick={() => { modalType = 'add-model'; modalData = {}; }}>
+                  <span class="material-symbols-outlined" style="font-size:16px;">add</span>
+                  Add Model
+                </button>
+              </div>
 
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-              {#each (selectedProvider.models || []) as model (model.id)}
-                <div class="connection-item" style="padding: 10px 14px;">
-                  <div style="display: flex; align-items: center; gap: 10px;">
-                    <span class="material-symbols-outlined" style="color:var(--mint); font-size: 18px;">psychology</span>
-                    <div>
-                      <div style="font-weight: 600; color: var(--text-strong); font-size: 13.5px;">{model.name}</div>
-                      <div class="muted" style="font-size: 12px;"><code>{model.id}</code></div>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                {#each providerModels as model (model.id)}
+                  <div class="model-row-item">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                      <span class="material-symbols-outlined" style="color:var(--mint); font-size: 18px;">psychology</span>
+                      <div>
+                        <div style="font-weight: 600; color: var(--text-strong); font-size: 13.5px;">{model.name}</div>
+                        <div class="model-id-pill"><code>{model.id}</code></div>
+                      </div>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <button class="ghost sm" onclick={() => copyText(model.id)} title="Copy Model ID" aria-label="Copy model ID">
+                        <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span>
+                      </button>
+                      <button class="sm test-model-btn" onclick={() => showToast(`Model test passed for ${model.name}`)}>
+                        <span class="material-symbols-outlined" style="font-size:15px;">science</span>
+                        Test Model
+                      </button>
                     </div>
                   </div>
-
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <button class="ghost sm" onclick={() => copyText(model.id)} title="Copy Model ID" aria-label="Copy model ID">
-                      <span class="material-symbols-outlined" style="font-size:16px;">content_copy</span>
-                    </button>
-                    <button class="sm" onclick={() => showToast(`Model test passed for ${model.name}`)}>
-                      <span class="material-symbols-outlined" style="font-size:16px;">science</span>
-                      Test Model
-                    </button>
-                  </div>
-                </div>
-              {/each}
+                {/each}
+              </div>
             </div>
-          </div>
 
         <!-- VIEW 3: ENDPOINT & KEY -->
         {:else if activeView === 'endpoint'}
@@ -1167,7 +1247,7 @@
 
         <!-- VIEW 6: QUOTA TRACKER -->
         {:else if activeView === 'quota'}
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: gap: 10px;">
             <div style="display: flex; gap: 8px;">
               <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">hourglass_top</span> Expiring first</button>
               <button class="sm"><span class="material-symbols-outlined" style="font-size:16px;">block</span> Turn off Empty</button>
@@ -1473,11 +1553,19 @@
   <!-- 100% PARITY OAUTH CONNECTION MODAL (EXACT MATCH FOR IMAGE #1) -->
   <div class="modal" onclick={() => modalType = null} role="presentation">
     <div class="modal-card oauth-modal-card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="oauth-popup-text">
-      <!-- WAITING FOR POPUP AUTHORIZATION -->
-      <div class="oauth-auth-box">
+      <!-- WAITING FOR POPUP AUTHORIZATION (CLICKABLE BUTTON TO LAUNCH/RE-FOCUS POPUP) -->
+      <a
+        href={modalData.authUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="oauth-auth-box oauth-auth-box-link"
+        title="Open authorization page in browser"
+        aria-label="Open authorization page"
+      >
         <div class="oauth-spinner" aria-hidden="true"></div>
         <span id="oauth-popup-text" class="oauth-wait-text">Waiting for popup authorization...</span>
-      </div>
+        <span class="material-symbols-outlined" style="margin-left: auto; font-size: 16px; color: var(--muted-dark);">open_in_new</span>
+      </a>
 
       <!-- OR PASTE CALLBACK URL MANUALLY DIVIDER -->
       <div class="oauth-divider">
@@ -1496,8 +1584,19 @@
             readonly
             value={modalData.authUrl}
             class="oauth-mono-input"
+            onclick={(e) => { e.currentTarget.select(); }}
           />
-          <button type="button" class="oauth-copy-btn" onclick={() => copyAuthUrl(modalData.authUrl)}>
+          <a
+            href={modalData.authUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="oauth-copy-btn"
+            title="Open in browser"
+          >
+            <span class="material-symbols-outlined" style="font-size: 16px;">open_in_new</span>
+            <span>Open</span>
+          </a>
+          <button type="button" class="oauth-copy-btn" onclick={() => copyAuthUrl(modalData.authUrl)} title="Copy URL">
             <span class="material-symbols-outlined" style="font-size: 16px;">
               {modalData.copied ? 'check' : 'content_copy'}
             </span>
