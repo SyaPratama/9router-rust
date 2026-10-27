@@ -1,6 +1,6 @@
 use axum::{routing::get, Router};
 
-use crate::dashboard::{serve_asset, serve_dashboard};
+use crate::web::{serve_asset, serve_dashboard};
 
 pub fn routes() -> Router<crate::api::middleware::AppState> {
     Router::new()

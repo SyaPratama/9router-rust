@@ -1,0 +1,416 @@
+[
+  {
+    "id": "rea",
+    "name": "REA (Reverse Engineer Anything)",
+    "author": "morluto",
+    "repo": "morluto/rea",
+    "url": "https://github.com/morluto/rea",
+    "stars": 393787,
+    "category": "Reverse Engineering",
+    "description": "Reverse engineer anything with agents, from app behavior down to native binaries and network protocols.",
+    "installCommand": "npx skills add morluto/rea",
+    "tags": [
+      "reversing",
+      "binary",
+      "security",
+      "analysis",
+      "decompilation"
+    ]
+  },
+  {
+    "id": "anthropic-skills",
+    "name": "Anthropic Official Agent Skills",
+    "author": "anthropics",
+    "repo": "anthropics/skills",
+    "url": "https://github.com/anthropics/skills",
+    "stars": 184086,
+    "category": "Core & Tool Use",
+    "description": "Public official repository for Anthropic Agent Skills across Claude Code, Cowork, and tool integrations.",
+    "installCommand": "claude skill add anthropics/skills",
+    "tags": [
+      "anthropic",
+      "claude",
+      "tools",
+      "official",
+      "orchestration"
+    ]
+  },
+  {
+    "id": "ponytail",
+    "name": "Ponytail (Lazy Senior Dev)",
+    "author": "DietrichGebert",
+    "repo": "DietrichGebert/ponytail",
+    "url": "https://github.com/DietrichGebert/ponytail",
+    "stars": 177518,
+    "category": "Engineering & Minimalism",
+    "description": "Makes your AI agent think like the laziest senior dev in the room. The best code is the code you never wrote.",
+    "installCommand": "npx skills add DietrichGebert/ponytail",
+    "tags": [
+      "yagni",
+      "minimalist",
+      "diff-audit",
+      "refactoring",
+      "senior-dev"
+    ]
+  },
+  {
+    "id": "agent-skills-addy",
+    "name": "Production Engineering Skills",
+    "author": "addyosmani",
+    "repo": "addyosmani/agent-skills",
+    "url": "https://github.com/addyosmani/agent-skills",
+    "stars": 110907,
+    "category": "Engineering & Architecture",
+    "description": "Production-grade engineering skills for AI coding agents: architecture patterns, testing, performance, and reliability.",
+    "installCommand": "npx skills add addyosmani/agent-skills",
+    "tags": [
+      "production",
+      "architecture",
+      "best-practices",
+      "performance",
+      "testing"
+    ]
+  },
+  {
+    "id": "open-design",
+    "name": "Open Design Workspace",
+    "author": "nexu-io",
+    "repo": "nexu-io/open-design",
+    "url": "https://github.com/nexu-io/open-design",
+    "stars": 104254,
+    "category": "Design & Prototyping",
+    "description": "Collaborative AI Design Agent Workspace. Create motion, prototypes, websites, apps, dashboards, presentations, and visuals.",
+    "installCommand": "npx skills add nexu-io/open-design",
+    "tags": [
+      "design",
+      "prototypes",
+      "ui-ux",
+      "canvas",
+      "motion"
+    ]
+  },
+  {
+    "id": "taste-skill",
+    "name": "Taste & Art Direction",
+    "author": "Leonxlnx",
+    "repo": "Leonxlnx/taste-skill",
+    "url": "https://github.com/Leonxlnx/taste-skill",
+    "stars": 103229,
+    "category": "Design & Taste",
+    "description": "Agent skills that give coding agents taste: art direction, reference images, and a browser check instead of generic AI pages.",
+    "installCommand": "npx skills add Leonxlnx/taste-skill",
+    "tags": [
+      "taste",
+      "art-direction",
+      "visual-polish",
+      "design-review",
+      "anti-ai"
+    ]
+  },
+  {
+    "id": "archify",
+    "name": "Archify Architecture Diagrams",
+    "author": "tt-a1i",
+    "repo": "tt-a1i/archify",
+    "url": "https://github.com/tt-a1i/archify",
+    "stars": 90074,
+    "category": "Diagram & Architecture",
+    "description": "Turn any idea, plan, or codebase into a beautiful interactive diagram. An agent skill for Claude Code, Codex, and more.",
+    "installCommand": "npx skills add tt-a1i/archify",
+    "tags": [
+      "diagrams",
+      "system-architecture",
+      "svg",
+      "interactive",
+      "flowchart"
+    ]
+  },
+  {
+    "id": "awesome-claude-skills",
+    "name": "Awesome Claude Skills",
+    "author": "ComposioHQ",
+    "repo": "ComposioHQ/awesome-claude-skills",
+    "url": "https://github.com/ComposioHQ/awesome-claude-skills",
+    "stars": 78034,
+    "category": "Claude & Tooling",
+    "description": "A curated list of awesome Claude Skills, resources, and tools for customizing Claude AI workflows.",
+    "installCommand": "npx skills add ComposioHQ/awesome-claude-skills",
+    "tags": [
+      "composio",
+      "tooling",
+      "claude",
+      "integrations",
+      "ecosystem"
+    ]
+  },
+  {
+    "id": "career-ops",
+    "name": "Career Ops Agent",
+    "author": "career-ops-hq",
+    "repo": "career-ops-hq/career-ops",
+    "url": "https://github.com/career-ops-hq/career-ops",
+    "stars": 77721,
+    "category": "Automation & Career",
+    "description": "Open-source AI job search agent: scan job boards, score CV match, tailor ATS-friendly resumes, and interview preparation.",
+    "installCommand": "npx skills add career-ops-hq/career-ops",
+    "tags": [
+      "automation",
+      "resume",
+      "evaluation",
+      "cli-agent",
+      "career"
+    ]
+  },
+  {
+    "id": "diagram-design",
+    "name": "Editorial Diagram Design",
+    "author": "cathrynlavery",
+    "repo": "cathrynlavery/diagram-design",
+    "url": "https://github.com/cathrynlavery/diagram-design",
+    "stars": 61529,
+    "category": "Diagram & Visualization",
+    "description": "Editorial diagram design for Claude Code, Codex, Copilot, Cursor, and Pi. 45 diagram types in clean self-contained SVG.",
+    "installCommand": "npx skills add cathrynlavery/diagram-design",
+    "tags": [
+      "diagrams",
+      "editorial",
+      "svg",
+      "clean-design",
+      "data-viz"
+    ]
+  },
+  {
+    "id": "humanizer",
+    "name": "Humanizer Text Polish",
+    "author": "blader",
+    "repo": "blader/humanizer",
+    "url": "https://github.com/blader/humanizer",
+    "stars": 61198,
+    "category": "Copywriting & Text",
+    "description": "Agent skill that removes signs of AI-generated writing, sycophantic preamble, and filler from copy and articles.",
+    "installCommand": "npx skills add blader/humanizer",
+    "tags": [
+      "copywriting",
+      "anti-ai",
+      "editorial",
+      "tone",
+      "humanize"
+    ]
+  },
+  {
+    "id": "marketingskills",
+    "name": "Marketing & Growth Skills",
+    "author": "coreyhaines31",
+    "repo": "coreyhaines31/marketingskills",
+    "url": "https://github.com/coreyhaines31/marketingskills",
+    "stars": 56772,
+    "category": "Marketing & SEO",
+    "description": "Marketing skills for Claude Code and AI agents: CRO, copywriting, technical SEO, analytics, and growth engineering.",
+    "installCommand": "npx skills add coreyhaines31/marketingskills",
+    "tags": [
+      "marketing",
+      "seo",
+      "cro",
+      "copy",
+      "analytics"
+    ]
+  },
+  {
+    "id": "awesome-claude-code",
+    "name": "Awesome Claude Code Hub",
+    "author": "hesreallyhim",
+    "repo": "hesreallyhim/awesome-claude-code",
+    "url": "https://github.com/hesreallyhim/awesome-claude-code",
+    "stars": 56642,
+    "category": "Claude Code Ecosystem",
+    "description": "A hand-picked collection of resources, top tier skills, ambidextrous agents, and developer tooling for Claude Code.",
+    "installCommand": "npx skills add hesreallyhim/awesome-claude-code",
+    "tags": [
+      "claude-code",
+      "developer-tooling",
+      "prompts",
+      "plugins",
+      "showcase"
+    ]
+  },
+  {
+    "id": "scientific-agent-skills",
+    "name": "Scientific Agent Skills",
+    "author": "K-Dense-AI",
+    "repo": "K-Dense-AI/scientific-agent-skills",
+    "url": "https://github.com/K-Dense-AI/scientific-agent-skills",
+    "stars": 54850,
+    "category": "Research & Science",
+    "description": "Turn any AI agent into an AI Scientist. 177 ready-to-use validated skills plus 100+ scientific databases covering biology, chemistry, and drug discovery.",
+    "installCommand": "npx skills add K-Dense-AI/scientific-agent-skills",
+    "tags": [
+      "science",
+      "biology",
+      "chemistry",
+      "research",
+      "databases"
+    ]
+  },
+  {
+    "id": "awesome-openclaw-skills",
+    "name": "Awesome OpenClaw Skills",
+    "author": "VoltAgent",
+    "repo": "VoltAgent/awesome-openclaw-skills",
+    "url": "https://github.com/VoltAgent/awesome-openclaw-skills",
+    "stars": 53370,
+    "category": "OpenClaw Ecosystem",
+    "description": "The awesome collection of OpenClaw skills: 5,400+ skills filtered and categorized from the official OpenClaw Skills Registry.",
+    "installCommand": "npx skills add VoltAgent/awesome-openclaw-skills",
+    "tags": [
+      "openclaw",
+      "claw",
+      "automation",
+      "tooling",
+      "skills-registry"
+    ]
+  },
+  {
+    "id": "cherry-studio",
+    "name": "Cherry Studio Assistant Skills",
+    "author": "CherryHQ",
+    "repo": "CherryHQ/cherry-studio",
+    "url": "https://github.com/CherryHQ/cherry-studio",
+    "stars": 53019,
+    "category": "Productivity & Assistants",
+    "description": "AI productivity studio with smart chat, autonomous agents, and 300+ assistants with unified access to frontier models.",
+    "installCommand": "npx skills add CherryHQ/cherry-studio",
+    "tags": [
+      "productivity",
+      "multi-model",
+      "assistants",
+      "agents",
+      "ui"
+    ]
+  },
+  {
+    "id": "agentic-awesome-skills",
+    "name": "AAS Core Agent Catalog",
+    "author": "sickn33",
+    "repo": "sickn33/agentic-awesome-skills",
+    "url": "https://github.com/sickn33/agentic-awesome-skills",
+    "stars": 48573,
+    "category": "Control Plane & Meta-Skills",
+    "description": "AAS Core: local, agent-first control plane for catalog discovery, selection, and planning, backed by 2,750+ agentic skills.",
+    "installCommand": "npx skills add sickn33/agentic-awesome-skills",
+    "tags": [
+      "control-plane",
+      "meta-skills",
+      "catalog",
+      "workbench",
+      "orchestration"
+    ]
+  },
+  {
+    "id": "open-code-review",
+    "name": "Alibaba Open Code Review",
+    "author": "alibaba",
+    "repo": "alibaba/open-code-review",
+    "url": "https://github.com/alibaba/open-code-review",
+    "stars": 48417,
+    "category": "Code Review & Security",
+    "description": "Hybrid architecture code review: deterministic pipelines + LLM Agent, line-level comments, NPE, thread-safety, XSS, and SQLi checks.",
+    "installCommand": "npx skills add alibaba/open-code-review",
+    "tags": [
+      "code-review",
+      "security",
+      "static-analysis",
+      "alibaba",
+      "quality"
+    ]
+  },
+  {
+    "id": "agents-marketplace",
+    "name": "Multi-Harness Agent Marketplace",
+    "author": "wshobson",
+    "repo": "wshobson/agents",
+    "url": "https://github.com/wshobson/agents",
+    "stars": 41850,
+    "category": "Marketplace & Tooling",
+    "description": "Multi-harness agentic plugin marketplace for Claude Code, Codex, Cursor, OpenCode, Copilot, Antigravity, and Pi.",
+    "installCommand": "npx skills add wshobson/agents",
+    "tags": [
+      "marketplace",
+      "multi-harness",
+      "cursor",
+      "codex",
+      "copilot"
+    ]
+  },
+  {
+    "id": "awesome-copilot",
+    "name": "Awesome GitHub Copilot Skills",
+    "author": "github",
+    "repo": "github/awesome-copilot",
+    "url": "https://github.com/github/awesome-copilot",
+    "stars": 40461,
+    "category": "Coding & Copilot",
+    "description": "Community-contributed instructions, agents, skills, and configurations to help you make the most of GitHub Copilot.",
+    "installCommand": "gh extension install github/awesome-copilot",
+    "tags": [
+      "copilot",
+      "github",
+      "instructions",
+      "coding",
+      "productivity"
+    ]
+  },
+  {
+    "id": "awesome-agent-skills",
+    "name": "1000+ Universal Agent Skills",
+    "author": "VoltAgent",
+    "repo": "VoltAgent/awesome-agent-skills",
+    "url": "https://github.com/VoltAgent/awesome-agent-skills",
+    "stars": 36425,
+    "category": "Universal Agent Skills",
+    "description": "A curated collection of 1,000+ agent skills from official teams and community, compatible with all agent harnesses.",
+    "installCommand": "npx skills add VoltAgent/awesome-agent-skills",
+    "tags": [
+      "universal",
+      "multi-agent",
+      "standards",
+      "community",
+      "catalog"
+    ]
+  },
+  {
+    "id": "cognee",
+    "name": "Cognee AI Memory Platform",
+    "author": "topoteretes",
+    "repo": "topoteretes/cognee",
+    "url": "https://github.com/topoteretes/cognee",
+    "stars": 32798,
+    "category": "Memory & Knowledge Graph",
+    "description": "Open-source AI memory platform for agents. Give your AI agents persistent long-term memory with small models.",
+    "installCommand": "pip install cognee",
+    "tags": [
+      "memory",
+      "knowledge-graph",
+      "rag",
+      "long-term",
+      "context"
+    ]
+  },
+  {
+    "id": "anti-slop",
+    "name": "Anti-Slop Design & Code Filter",
+    "author": "miqdadbadjuber",
+    "repo": "miqdadbadjuber/anti-slop",
+    "url": "https://github.com/miqdadbadjuber/anti-slop",
+    "stars": 28940,
+    "category": "Design & Code Quality",
+    "description": "Rules for AI Coding Agents: stops generic AI slop in code, UI, copywriting, mobile layouts, and accessibility.",
+    "installCommand": "npx antislop-ai",
+    "tags": [
+      "anti-slop",
+      "design-system",
+      "accessibility",
+      "craftsmanship",
+      "quality"
+    ]
+  }
+]

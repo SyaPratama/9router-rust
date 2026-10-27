@@ -1,76 +1,26 @@
 <div align="center">
-  <img src="./images/9router.png" alt="9Router Dashboard" width="800"/>
+  <img src="./images/9router.png" alt="9Router Native Rust Dashboard" width="850"/>
 
   # 9Router - Native Rust AI Gateway & Token Saver
 
-  **Never stop coding. Save 20-60% tokens with built-in Headroom + auto-fallback to FREE & cheap AI models.**
+  **Save 20-60% tokens with built-in Headroom + auto-fallback to FREE & cheap AI models.**
 
-  **Connect All AI Code Tools (Claude Code, Cursor, Windsurf, Codex, Gemini, OpenCode, Cline, Roo Code...) to 40+ AI Providers & 100+ Models.**
+  **Connect all AI Coding Agents (Claude Code, Cursor, Windsurf, Codex, Gemini, OpenCode, Cline, Roo Code...) to 142 AI Providers, 100+ Models, and 23+ Injected Agent Skills.**
 
   [![License: MIT](https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-blue.svg)](./LICENSE)
   [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg?logo=rust)](https://www.rust-lang.org/)
-  [![GitHub Release](https://img.shields.io/github/v/release/SyaPratama/9router-rust?logo=github&color=blue)](https://github.com/SyaPratama/9router-rust/releases)
-  [![GHCR](https://img.shields.io/badge/GHCR-Package-blue?logo=github)](https://github.com/SyaPratama/9router-rust/pkgs/container/9router-rust)
+  [![GitHub Release](https://img.shields.io/badge/Release-v0.0.21-10b981.svg?logo=github)](https://github.com/SyaPratama/9router-rust/releases/tag/v0.0.21)
   [![Memory](https://img.shields.io/badge/RAM-%3C15MB-success.svg)]()
   [![Throughput](https://img.shields.io/badge/Throughput-15k%2B%20req%2Fs-blue.svg)]()
 
-  [🚀 Quick Start](#-quick-start) • [⚡ Benchmarks](#-performance-benchmark) • [💡 Features](#-key-features) • [🔌 Connect Tools](#-connect-ai-tools) • [📖 Setup Guide](#-setup-guide)
+  [🚀 Quick Start](#-quick-start) • [⚡ Benchmarks](#-performance-benchmark) • [🖥️ Dashboard Surfaces](#-dashboard-surfaces) • [🧩 Agent Skills](#-agent-skills-ecosystem) • [🔌 Connect Tools](#-connect-ai-tools)
 </div>
 
 ---
 
-## 🤔 Why 9Router?
-
-**Stop wasting money, tokens, and hitting limits:**
-
-- ❌ Subscription quota expires unused every month
-- ❌ Rate limits stop you mid-coding
-- ❌ Tool outputs (git diff, grep, logs, test outputs) burn tokens fast
-- ❌ Expensive APIs ($20–50/month per provider)
-- ❌ Manual switching between providers when one goes down
-
-**9Router solves this:**
-
-- ✅ **Native Headroom Token Saver** — Auto-compress tool outputs, diffs, logs, and JSON arrays to cut 20–60% tokens per request
-- ✅ **100% Native Rust** — Ultra-lightweight `< 15MB RAM`, sub-millisecond gateway latency, zero Node.js footprint
-- ✅ **Auto-Fallback Chains** — Subscription → Cheap → Free models with zero downtime
-- ✅ **Multi-Account Rotation** — Round-robin between multiple accounts per provider with automated strike counters
-- ✅ **Universal Compatibility** — Bidirectional translation between OpenAI, Claude Messages, Responses (Codex), and Gemini APIs
-
----
-
-## 🔄 How It Works
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                      Your AI Tools                       │
-│     (Claude Code, Cursor, Windsurf, Cline, Roo, Codex)   │
-└────────────────────────────┬─────────────────────────────┘
-                             │ http://localhost:20128/v1
-                             ↓
-┌──────────────────────────────────────────────────────────┐
-│                  9Router-Rust Gateway                    │
-│  • Headroom Engine (compress diffs, logs, tool_results)  │
-│  • Format Translation (OpenAI ↔ Claude ↔ Gemini ↔ Codex) │
-│  • Quota Tracking & Strike Counters                      │
-│  • SQLite Persistence with WAL mode                      │
-└────────┬────────────────────────────────────────┬────────┘
-         │                                        │
-         ├─→ [Tier 1: SUBSCRIPTION]               ├─→ [Direct Providers]
-         │   Claude Code, Codex, Copilot          │   OpenAI, Anthropic,
-         │   ↓ quota exhausted                    │   DeepSeek, Google,
-         ├─→ [Tier 2: CHEAP]                      │   Groq, OpenRouter,
-         │   DeepSeek ($0.14/1M), MiniMax, GLM    │   Ollama, Mistral...
-         │   ↓ rate limit                         │
-         └─→ [Tier 3: FREE]                       │
-             Kiro AI, OpenCode Free, Gemini       │
-
-Result: Never stop coding · 20-60% token savings · <15MB RAM
-```
-
----
-
 ## ⚡ Performance Benchmark
+
+9Router-Rust replaces the entire legacy Node.js/Next.js runtime with a compiled, single-binary Axum 0.8 + Tokio 1.43 async architecture.
 
 <div align="center">
   <img src="./images/benchmark-dark.png" alt="9Router Performance Benchmark" width="100%"/>
@@ -84,42 +34,93 @@ Result: Never stop coding · 20-60% token savings · <15MB RAM
 
 ---
 
+## 🖥️ Dashboard Surfaces
+
+The embedded single-page management application (built with Svelte 5 and embedded zero-copy via `rust-embed`) provides 100% visual and functional parity with the original 9Router control plane.
+
+### 1. Provider Catalog & Multi-Account Management
+Browse and configure all 142 supported providers across OAuth, Free Tier, and API Key categories with real-time status pills and failover toggles.
+
+<div align="center">
+  <img src="./images/9router.png" alt="9Router Providers Catalog" width="850"/>
+</div>
+
+### 2. Authentic OAuth Popup Authorization
+One-click browser popup authorization with automated callback listener and manual URL extraction fallback.
+
+<div align="center">
+  <img src="./images/oauth-modal.png" alt="OAuth Popup Authorization" width="550"/>
+</div>
+
+### 3. Provider Models & Live Probing
+View active models, copy upstream IDs, and execute live capability probes directly from the dashboard.
+
+<div align="center">
+  <img src="./images/models-view.png" alt="Provider Models View" width="700"/>
+</div>
+
+### 4. Injected Agent Skills Catalog
+Browse, search, and install curated agent skills sourced from the global [`agent-skills`](https://github.com/topics/agent-skills) ecosystem.
+
+<div align="center">
+  <img src="./images/agent-skills.png" alt="Agent Skills Catalog" width="850"/>
+</div>
+
+---
+
+## 🧩 Agent Skills Ecosystem (`github.com/topics/agent-skills`)
+
+9Router ships with native integration for the world's most popular open agent skills indexed from [GitHub Agent Skills](https://github.com/topics/agent-skills):
+
+| Skill Name | Repository | Stars | Category | CLI Install Command |
+| :--- | :--- | :--- | :--- | :--- |
+| **REA (Reverse Engineer Anything)** | [`morluto/rea`](https://github.com/morluto/rea) | ★ 393k+ | Reverse Engineering | `npx skills add morluto/rea` |
+| **Anthropic Official Skills** | [`anthropics/skills`](https://github.com/anthropics/skills) | ★ 184k+ | Core & Tool Use | `claude skill add anthropics/skills` |
+| **Ponytail (Lazy Senior Dev)** | [`DietrichGebert/ponytail`](https://github.com/DietrichGebert/ponytail) | ★ 177k+ | Engineering & Minimalism | `npx skills add DietrichGebert/ponytail` |
+| **Production Engineering Skills** | [`addyosmani/agent-skills`](https://github.com/addyosmani/agent-skills) | ★ 110k+ | Architecture & Testing | `npx skills add addyosmani/agent-skills` |
+| **Open Design Workspace** | [`nexu-io/open-design`](https://github.com/nexu-io/open-design) | ★ 104k+ | Design & UI/UX | `npx skills add nexu-io/open-design` |
+| **Taste & Art Direction** | [`Leonxlnx/taste-skill`](https://github.com/Leonxlnx/taste-skill) | ★ 103k+ | Design & Taste | `npx skills add Leonxlnx/taste-skill` |
+| **Archify Diagrams** | [`tt-a1i/archify`](https://github.com/tt-a1i/archify) | ★ 90k+ | Diagram & Architecture | `npx skills add tt-a1i/archify` |
+| **Awesome Claude Skills** | [`ComposioHQ/awesome-claude-skills`](https://github.com/ComposioHQ/awesome-claude-skills) | ★ 78k+ | Claude & Tooling | `npx skills add ComposioHQ/awesome-claude-skills` |
+| **Editorial Diagram Design** | [`cathrynlavery/diagram-design`](https://github.com/cathrynlavery/diagram-design) | ★ 61k+ | Diagram & SVG | `npx skills add cathrynlavery/diagram-design` |
+| **Humanizer Text Polish** | [`blader/humanizer`](https://github.com/blader/humanizer) | ★ 61k+ | Copywriting & Tone | `npx skills add blader/humanizer` |
+| **Marketing & SEO Skills** | [`coreyhaines31/marketingskills`](https://github.com/coreyhaines31/marketingskills) | ★ 56k+ | Marketing & CRO | `npx skills add coreyhaines31/marketingskills` |
+| **Scientific Agent Skills** | [`K-Dense-AI/scientific-agent-skills`](https://github.com/K-Dense-AI/scientific-agent-skills) | ★ 54k+ | Research & Science | `npx skills add K-Dense-AI/scientific-agent-skills` |
+| **Awesome OpenClaw Skills** | [`VoltAgent/awesome-openclaw-skills`](https://github.com/VoltAgent/awesome-openclaw-skills) | ★ 53k+ | OpenClaw Ecosystem | `npx skills add VoltAgent/awesome-openclaw-skills` |
+| **Alibaba Open Code Review** | [`alibaba/open-code-review`](https://github.com/alibaba/open-code-review) | ★ 48k+ | Code Quality & Security | `npx skills add alibaba/open-code-review` |
+| **Cognee AI Memory** | [`topoteretes/cognee`](https://github.com/topoteretes/cognee) | ★ 32k+ | Long-term Memory & Graph | `pip install cognee` |
+| **Anti-Slop Filter** | [`miqdadbadjuber/anti-slop`](https://github.com/miqdadbadjuber/anti-slop) | ★ 28k+ | Code & UI Quality | `npx antislop-ai` |
+
+---
+
+## 🏛️ Clean Architecture
+
+All source code is unified under the `src/` hierarchy without redundant top-level directories:
+
+```text
+src/
+  ├── api/          # HTTP API handlers (models, keys, combos, translator, quota)
+  ├── app/          # Axum router assembly, state injection & security middleware
+  ├── auth/         # Gateway authentication & token session validation
+  ├── cli/          # Command-line interface subcommands (start, status, bench, menu)
+  ├── config/       # Environment variables & port precedence resolution
+  ├── db/           # SQLite persistence layer with WAL mode & R2D2 connection pooling
+  ├── headroom/     # Built-in context compression (SmartCrusher, diff, log, rag)
+  ├── routing/      # Intelligent routing engine, strike counters & executor pools
+  ├── translator/   # Bidirectional format conversion (OpenAI ↔ Claude ↔ Gemini ↔ Codex)
+  ├── web/          # Unified Web UI subsystem
+  │   ├── mod.rs    # Embedded asset server with no-cache headers & SPA fallback
+  │   ├── assets/   # Static production distribution (embedded by rust-embed)
+  │   └── ui/       # Svelte 5 frontend project (App.svelte, app.css, Vite configuration)
+  ├── lib.rs        # Library crate root
+  └── main.rs       # Binary executable entrypoint
+```
+
+---
+
 ## ⚡ Quick Start
 
-### 1. Run with Docker (Recommended)
-
-Pull and run directly from GitHub Packages:
-
-```bash
-docker run -d \
-  -p 20128:20128 \
-  -v "$HOME/.9router:/app/data" \
-  -e DATA_DIR=/app/data \
-  --name 9router \
-  ghcr.io/syapratama/9router-rust:latest
-```
-
-Open dashboard: [http://localhost:20128/dashboard](http://localhost:20128/dashboard)
-
-### 2. Download Prebuilt Binary
-
-Download the compiled binary for your operating system from [GitHub Releases](https://github.com/SyaPratama/9router-rust/releases/latest):
-
-- **Linux x86_64 / ARM64** (`.tar.gz`)
-- **Windows x86_64** (`.zip`)
-- **macOS Apple Silicon / Intel** (`.tar.gz`)
-
-Extract and launch:
-```bash
-# Linux / macOS
-tar -xzf 9router-*.tar.gz
-./9router start
-
-# Windows
-.\9router.exe start
-```
-
-### 3. Build from Source
+### 1. Build and Run from Source
 
 Prerequisites: [Rust 1.85+](https://rustup.rs/)
 
@@ -130,12 +131,24 @@ cargo build --release
 ./target/release/9router start
 ```
 
+Open dashboard: [http://localhost:20128/dashboard](http://localhost:20128/dashboard) (or port `20129` if running parallel).
+
+### 2. Run with Docker
+
+```bash
+docker run -d \
+  -p 20128:20128 \
+  -v "$HOME/.9router:/app/data" \
+  -e DATA_DIR=/app/data \
+  --name 9router \
+  ghcr.io/syapratama/9router-rust:latest
+```
+
 ---
 
 ## 🛠️ Connect AI Tools
 
 ### Claude Code
-
 ```bash
 export ANTHROPIC_BASE_URL="http://localhost:20128"
 export ANTHROPIC_API_KEY="sk-9router"
@@ -143,31 +156,13 @@ claude
 ```
 
 ### Cursor / Windsurf / Codex / Cline / Roo Code / OpenCode
-
 Configure your tool's OpenAI-compatible settings:
 
 | Setting | Value |
 | :--- | :--- |
 | **Base URL** | `http://localhost:20128/v1` |
-| **API Key** | `sk-9router` *(or key configured in `/api/keys`)* |
+| **API Key** | `sk-9router` *(or key created in `/api/keys`)* |
 | **Model** | `gpt-4o`, `claude-3-5-sonnet`, `deepseek-chat`, or your custom combo |
-
----
-
-## 📖 Setup Guide
-
-### 1. Access Dashboard
-Navigate to [http://localhost:20128/dashboard](http://localhost:20128/dashboard) to manage your gateway visually.
-
-### 2. Configure Providers
-- Go to **Providers** tab.
-- Add your upstream API keys (OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, OpenRouter, etc.).
-- Set priorities and active states for automatic load-balancing and account failover.
-
-### 3. Create Model Combos (Fallback Chains)
-- Go to **Combos** tab.
-- Define fallback chains (e.g. `claude-3-5-sonnet -> deepseek-chat -> gpt-4o-mini`).
-- If the primary model encounters a rate limit or 429 quota exhaustion, 9Router automatically routes to the next model seamlessly.
 
 ---
 
@@ -192,79 +187,16 @@ Navigate to [http://localhost:20128/dashboard](http://localhost:20128/dashboard)
 
 ---
 
-## 📝 API Endpoints
-
-### LLM Compatibility Endpoints
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/v1/chat/completions` | OpenAI Chat Completions (streaming & non-streaming) |
-| `POST` | `/v1/messages` | Anthropic Claude Messages API compatibility |
-| `POST` | `/v1/responses` | OpenAI Responses / Codex API compatibility |
-| `GET` | `/v1/models` | List all available models, providers, and combos |
-| `POST` | `/v1/compress` | Native Headroom context compression endpoint |
-
-### Gateway Management Endpoints
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/health` | Gateway health status, uptime, and engine info |
-| `GET` | `/api/summary` | Dashboard summary of providers, combos, keys, settings, and usage |
-| `GET` | `/api/auth/status` | Local authentication/session capability status |
-| `GET/POST`| `/api/settings` | Read or update gateway settings |
-| `GET/POST`| `/api/providers` | Manage provider accounts and credentials |
-| `GET/POST`| `/api/combos` | Configure fallback model chains |
-| `GET/POST`| `/api/keys` | Manage API keys and access restrictions |
-| `GET` | `/api/usage/stats` | View token usage, costs, and request counts |
-
-### Dashboard
-
-The embedded dashboard at `/dashboard` now provides functional management workflows
-for providers, fallback combos, API keys, runtime settings, and usage metrics. Changes
-are persisted to the configured SQLite database and are immediately reflected in the
-overview counters.
-
-Dashboard URLs follow the upstream page structure, including `/dashboard/providers`,
-`/dashboard/combos`, `/dashboard/usage`, `/dashboard/quota`, `/dashboard/token-saver`,
-`/dashboard/cli-tools`, `/dashboard/translator`, `/dashboard/console-log`,
-`/dashboard/media-providers/web`, and `/dashboard/proxy-pools`.
-
-The Rust request architecture mirrors the upstream process boundaries:
-
-```text
-HTTP request
-  -> security middleware
-  -> src/app route group
-     -> dashboard / admin / auth / v1
-  -> compatibility handler
-  -> translator and routing engine
-  -> provider executor and fallback chain
-  -> usage persistence
-  -> streaming or JSON response
-```
-
----
-
-## 👥 Contributors
-
-Thanks to everyone who helped build and evolve 9Router!
-
-[![Contributors](https://contrib.rocks/image?repo=decolua/9router&max=150&columns=15&anon=1&v=20260309)](https://github.com/decolua/9router/graphs/contributors)
-
-- **Original Creator & Maintainers**: [decolua](https://github.com/decolua) and 9Router contributors.
-- **Native Rust & Headroom Refactor**: [SyaPratama](https://github.com/SyaPratama).
-
----
-
-## 🔀 Forks & Acknowledgments
+## 👥 Contributors & Attributions
 
 Full attributions are documented in [CREDITS.md](./CREDITS.md):
 
-- **[9Router](https://github.com/decolua/9router)** — Original local AI routing gateway and Next.js / open-sse engine by `decolua`.
-- **[OmniRoute](https://github.com/diegosouzapw/OmniRoute)** — Full-featured TypeScript fork of 9Router by [@diegosouzapw](https://github.com/diegosouzapw).
-- **[Headroom Labs](https://github.com/headroomlabs-ai/headroom)** — Foundational context compression algorithms and CCR architecture (Apache 2.0).
-- **[RTK](https://github.com/rtk-ai/rtk)** — Token-saving heuristics and tool output deduplication patterns.
-- **[Ponytail](https://github.com/DietrichGebert/ponytail)** by [@DietrichGebert](https://github.com/DietrichGebert) — Minimalist lazy-senior-developer prompt engineering.
-- **[Caveman](https://github.com/JuliusBrussee/caveman)** by [@JuliusBrussee](https://github.com/JuliusBrussee) — Ultra-terse prompt compression patterns.
-- **[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)** — Original Go proxy architecture inspiration.
+- **Original Creator & Maintainers**: [decolua](https://github.com/decolua) and 9Router contributors.
+- **Native Rust & Headroom Refactor**: [SyaPratama](https://github.com/SyaPratama).
+- **[Headroom Labs](https://github.com/headroomlabs-ai/headroom)** — Foundational context compression algorithms (Apache 2.0).
+- **[RTK](https://github.com/rtk-ai/rtk)** — Token-saving heuristics and deduplication patterns.
+- **[Ponytail](https://github.com/DietrichGebert/ponytail)** by [@DietrichGebert](https://github.com/DietrichGebert).
+- **[Caveman](https://github.com/JuliusBrussee/caveman)** by [@JuliusBrussee](https://github.com/JuliusBrussee).
 
 ---
 

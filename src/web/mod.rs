@@ -4,7 +4,7 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
-#[folder = "src/dashboard/assets/"]
+#[folder = "src/web/assets/"]
 struct Asset;
 
 pub async fn serve_dashboard() -> impl IntoResponse {

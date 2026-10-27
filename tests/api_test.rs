@@ -424,7 +424,7 @@ async fn test_slice2_admin_and_proxy_endpoints() {
     assert_eq!(resp.status(), StatusCode::OK);
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     let val: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(val["version"], "1.0.1");
+    assert_eq!(val["version"], env!("CARGO_PKG_VERSION"));
 
     // 2. GET /api/quota
     let req = Request::builder()

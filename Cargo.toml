@@ -1,6 +1,6 @@
 [package]
 name = "router9"
-version = "1.0.1"
+version = "0.0.21"
 edition = "2021"
 description = "Native Rust AI Gateway with built-in Headroom Context Compression"
 license = "MIT OR Apache-2.0"

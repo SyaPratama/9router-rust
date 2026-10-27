@@ -11,7 +11,8 @@ use crate::db::repos::keys::{ApiKeyItem, ApiKeysRepo};
 use crate::db::repos::settings::{SettingsRepo, SystemSettings};
 use crate::db::repos::usage::UsageRepo;
 
-static CATALOG_JSON: &str = include_str!("../../dashboard/assets/provider-registry.json");
+static CATALOG_JSON: &str = include_str!("../../web/assets/provider-registry.json");
+static SKILLS_JSON: &str = include_str!("../../web/assets/agent-skills.json");
 
 pub async fn get_health() -> impl IntoResponse {
     Json(json!({
@@ -79,6 +80,13 @@ pub async fn get_provider_catalog() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
         CATALOG_JSON,
+    )
+}
+
+pub async fn get_skills_catalog() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+        SKILLS_JSON,
     )
 }
 

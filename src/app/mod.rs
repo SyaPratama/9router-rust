@@ -19,7 +19,7 @@ pub fn build_router(engine: Arc<RoutingEngine>) -> Router {
         .merge(auth::routes())
         .merge(dashboard::routes())
         .merge(pages::routes())
-        .route("/", axum::routing::get(crate::dashboard::serve_dashboard))
+        .route("/", axum::routing::get(crate::web::serve_dashboard))
         .layer(axum_mw::from_fn_with_state(state.clone(), security_middleware))
         .with_state(state)
 }

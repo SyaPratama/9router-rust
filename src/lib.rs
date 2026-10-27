@@ -5,6 +5,7 @@ pub mod headroom;
 pub mod routing;
 pub mod translator;
 pub mod api;
-pub mod dashboard;
+pub mod web;
+pub use web as dashboard;
 pub mod cli;
 pub mod app;
