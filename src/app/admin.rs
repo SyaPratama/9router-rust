@@ -1,10 +1,8 @@
 use axum::{
-    routing::{delete, get, post},
-    Router,
+    routing::{delete, get, post, Router},
 };
-
-use crate::api::handlers;
 use crate::api::middleware::AppState;
+use crate::api::handlers;
 
 pub fn routes() -> Router<AppState> {
     let routes = Router::new()
@@ -16,7 +14,9 @@ pub fn routes() -> Router<AppState> {
         // Settings
         .route(
             "/settings",
-            get(handlers::admin::get_settings).post(handlers::admin::update_settings),
+            get(handlers::admin::get_settings)
+                .post(handlers::admin::update_settings)
+                .patch(handlers::admin::patch_settings),
         )
         .route("/oauth/{provider}/start", post(handlers::oauth::start))
         .route("/oauth/callback", get(handlers::oauth::callback))
@@ -26,13 +26,20 @@ pub fn routes() -> Router<AppState> {
         .route("/skills/search", get(handlers::admin::search_github_skills))
         .route("/providers/test-batch", post(handlers::admin::test_batch_providers))
         .route("/providers/validate", post(handlers::admin::validate_provider_config))
+        .route("/models", get(handlers::models::list_models))
+        .route("/provider-nodes", get(handlers::admin::list_provider_nodes))
+        .route("/models/availability", get(handlers::models::get_availability))
+        .route("/pxpipe/status", get(handlers::pxpipe::status))
+        .route("/pxpipe/health", get(handlers::pxpipe::health))
         .route(
             "/providers",
             get(handlers::admin::list_providers).post(handlers::admin::save_provider),
         )
         .route(
             "/providers/{id}",
-            get(handlers::admin::get_provider_or_connection).delete(handlers::admin::delete_provider),
+            get(handlers::admin::get_provider_or_connection)
+                .put(handlers::admin::save_provider)
+                .delete(handlers::admin::delete_provider),
         )
         .route("/providers/{id}/test", post(handlers::admin::test_provider))
         .route(
@@ -44,12 +51,15 @@ pub fn routes() -> Router<AppState> {
             delete(handlers::admin::delete_provider_model),
         )
         // Combos
-        .route("/combos/presets", get(handlers::admin::get_combo_presets))
+        .route("/combos/presets", get(handlers::admin::get_combo_presets).post(handlers::admin::save_combo_presets))
         .route(
             "/combos",
             get(handlers::admin::list_combos).post(handlers::admin::save_combo),
         )
-        .route("/combos/{id}", delete(handlers::admin::delete_combo))
+        .route(
+            "/combos/{id}",
+            get(handlers::admin::get_combo).put(handlers::admin::update_combo).delete(handlers::admin::delete_combo),
+        )
         // API Keys
         .route(
             "/keys",
@@ -58,7 +68,7 @@ pub fn routes() -> Router<AppState> {
         .route("/keys/{id}", delete(handlers::admin::delete_key))
         // Usage Stats & Details
         .route("/usage/stats", get(handlers::admin::get_usage_stats))
-.route("/usage/request-details", get(handlers::admin::get_usage_request_details))
+        .route("/usage/request-details", get(handlers::admin::get_usage_request_details))
         .route("/usage/history", get(handlers::admin::get_usage_history))
         .route("/usage/logs", get(handlers::admin::get_usage_logs))
         .route("/usage/chart", get(handlers::admin::get_usage_chart))
@@ -68,7 +78,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/headroom/status", get(handlers::admin::get_headroom_status))
         .route("/headroom/toggle", post(handlers::admin::toggle_headroom))
-        .route("/headroom/extras", post(handlers::admin::toggle_headroom))
+        .route("/headroom/extras", get(handlers::admin::get_headroom_extras).delete(handlers::admin::delete_headroom_extras))
         // CLI Tools
         .route(
             "/cli-tools/all-statuses",
@@ -81,6 +91,7 @@ pub fn routes() -> Router<AppState> {
             "/console-log/stream",
             get(handlers::console_log::stream_console_logs),
         )
+        .route("/dashboard/chat/completions", post(handlers::chat::handle_chat_completions))
         // Translator Runner & Endpoints
         .route("/translator/run", post(handlers::translator::run_translator))
         .route("/translator/load", get(handlers::admin::get_translator_samples))

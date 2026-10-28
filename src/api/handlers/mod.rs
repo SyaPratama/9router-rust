@@ -13,3 +13,4 @@ pub mod console_log;
 pub mod translator;
 pub mod oauth;
 pub mod proxy_pools;
+pub mod pxpipe;

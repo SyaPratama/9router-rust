@@ -25,7 +25,7 @@ pub enum Commands {
     Status,
     /// Open the interactive terminal configuration menu
     Menu,
-    /// Run performance benchmark comparison against 9Router (Next.js) & OmniRoute
+    /// Benchmark the local Rust health endpoint over TCP
     Bench {
         #[arg(short, long, default_value_t = 50)]
         concurrency: usize,

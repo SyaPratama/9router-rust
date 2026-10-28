@@ -69,16 +69,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("4. Ponytail Mode:        [ACTIVE]");
         }
         Commands::Bench { concurrency, requests } => {
-            println!("=== 9Router Performance Benchmark ===");
-            println!("Running {} requests at concurrency {} on live TCP socket...", requests, concurrency);
+            let worker_counts = request_counts(requests, concurrency)?;
+            let concurrency = worker_counts.len();
+            println!("=== 9Router Rust TCP Benchmark ===");
+            println!("GET /api/health · {requests} requests · {concurrency} workers");
 
             let pool = router9::db::init_memory_pool()?;
             let engine = Arc::new(RoutingEngine::new(pool));
             let app = build_router(engine);
-
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let local_addr = listener.local_addr()?;
-
             tokio::spawn(async move {
                 let _ = axum::serve(
                     listener,
@@ -90,53 +90,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let client = reqwest::Client::builder()
                 .pool_max_idle_per_host(concurrency)
                 .build()?;
-
-            let requests_per_worker = requests / concurrency;
-            let url = format!("http://{}/api/health", local_addr);
+            let url = format!("http://{local_addr}/api/health");
             let start = std::time::Instant::now();
-            let mut handles = Vec::new();
-
-            for _ in 0..concurrency {
-                let c = client.clone();
-                let u = url.clone();
+            let mut handles = Vec::with_capacity(concurrency);
+            for request_count in worker_counts {
+                let client = client.clone();
+                let url = url.clone();
                 handles.push(tokio::spawn(async move {
-                    let mut latencies = Vec::with_capacity(requests_per_worker);
-                    for _ in 0..requests_per_worker {
-                        let req_start = std::time::Instant::now();
-                        if let Ok(resp) = c.get(&u).send().await {
-                            if resp.status().is_success() {
-                                latencies.push(req_start.elapsed().as_secs_f64() * 1000.0);
+                    let mut latencies = Vec::with_capacity(request_count);
+                    let mut failures = 0;
+                    for _ in 0..request_count {
+                        let request_start = std::time::Instant::now();
+                        match client.get(&url).send().await {
+                            Ok(response) if response.status().is_success() => {
+                                latencies.push(request_start.elapsed().as_secs_f64() * 1000.0);
                             }
+                            _ => failures += 1,
                         }
                     }
-                    latencies
+                    (latencies, failures)
                 }));
             }
 
             let mut all_latencies = Vec::with_capacity(requests);
-            for h in handles {
-                if let Ok(l) = h.await {
-                    all_latencies.extend(l);
-                }
+            let mut failures = 0;
+            for handle in handles {
+                let (mut latencies, worker_failures) = handle.await?;
+                all_latencies.append(&mut latencies);
+                failures += worker_failures;
             }
 
             let elapsed = start.elapsed();
-            let throughput = (all_latencies.len() as f64) / elapsed.as_secs_f64();
+            let throughput = all_latencies.len() as f64 / elapsed.as_secs_f64();
             all_latencies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let p50 = if all_latencies.is_empty() { 0.0 } else { all_latencies[all_latencies.len() / 2] };
-
-            println!();
-            println!("Measured Live Run: {:.0} req/s, median latency: {:.2}ms (elapsed: {:.2?})", throughput, p50, elapsed);
-            println!();
-            println!("{:<18} | {:<22} | {:<14} | {:<16}", "Gateway", "Throughput", "Idle Memory", "Median Latency");
-            println!("{:-<18}-|-{:-<22}-|-{:-<14}-|-{:-<16}", "", "", "", "");
-            println!("{:<18} | {:<22} | {:<14} | {:<16}", "9Router-Rust", format!("{:.0} req/s (live)", throughput), "< 15 MB", format!("{:.2} ms", p50));
-            println!("{:<18} | {:<22} | {:<14} | {:<16}", "9Router (Next.js)", "525 req/s", "131 MB", "86.4 ms");
-            println!("{:<18} | {:<22} | {:<14} | {:<16}", "OmniRoute", "354 req/s", "424 MB", "123.1 ms");
-            println!();
-            println!("Detailed metrics in raw-results.json");
+            let p50 = all_latencies.get(all_latencies.len() / 2).copied().unwrap_or(0.0);
+            println!("Completed: {}/{} ({} failed)", all_latencies.len(), requests, failures);
+            println!("Throughput: {:.0} req/s · p50: {:.2} ms · elapsed: {:.2?}", throughput, p50, elapsed);
         }
     }
 
     Ok(())
+}
+
+fn request_counts(requests: usize, concurrency: usize) -> std::io::Result<Vec<usize>> {
+    if requests == 0 || concurrency == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "requests and concurrency must be greater than zero",
+        ));
+    }
+    let workers = concurrency.min(requests);
+    let base = requests / workers;
+    let remainder = requests % workers;
+    Ok((0..workers).map(|worker| base + if worker < remainder { 1 } else { 0 }).collect())
+}
+
+#[cfg(test)]
+mod benchmark_tests {
+    use super::request_counts;
+
+    #[test]
+    fn request_counts_preserve_totals_and_reject_zero_inputs() {
+        assert_eq!(request_counts(10, 3).unwrap(), [4, 3, 3]);
+        assert_eq!(request_counts(2, 5).unwrap(), [1, 1]);
+        assert!(request_counts(0, 1).is_err());
+        assert!(request_counts(1, 0).is_err());
+    }
 }

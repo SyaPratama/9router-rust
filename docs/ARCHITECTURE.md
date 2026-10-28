@@ -522,8 +522,8 @@ Runtime visibility sources:
 
 ## Security-Sensitive Boundaries
 
-- JWT secret (`JWT_SECRET`) secures dashboard session cookie verification/signing
-- Initial password fallback (`INITIAL_PASSWORD`, default `123456`) must be overridden in real deployments
+- Dashboard login requires `INITIAL_PASSWORD`; no default password is accepted. Missing configuration disables login with a service-unavailable response.
+- Successful login issues a random, HttpOnly, SameSite=Lax session cookie for 30 days; sessions are in memory and expire on server restart.
 - API key HMAC secret (`API_KEY_SECRET`) secures generated local API key format
 - Provider secrets (API keys/tokens) are persisted in local DB and should be protected at filesystem level
 - Cloud sync endpoints rely on API key auth + machine id semantics
@@ -532,7 +532,7 @@ Runtime visibility sources:
 
 Environment variables actively used by code:
 
-- App/auth: `JWT_SECRET`, `INITIAL_PASSWORD`
+- App/auth: `INITIAL_PASSWORD`
 - Storage: `DATA_DIR`
 - Security hashing: `API_KEY_SECRET`, `MACHINE_ID_SALT`
 - Logging: `ENABLE_REQUEST_LOGS`

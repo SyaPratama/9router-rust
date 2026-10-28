@@ -20,23 +20,11 @@
 
 ## ⚡ Performance Benchmark
 
-9Router-Rust replaces the entire legacy Node.js/Next.js runtime with a compiled, single-binary Axum 0.8 + Tokio 1.43 async architecture.
-
-<div align="center">
-  <img src="./images/benchmark-dark.png" alt="9Router Performance Benchmark" width="100%"/>
-</div>
-
-| Gateway | Runtime | Real TCP Throughput | Idle Memory (RSS) | Median Latency (p50) |
-| :--- | :--- | :--- | :--- | :--- |
-| **9Router-Rust** | **Native Rust (Axum + Tokio)** | **15,408 req/s** *(live TCP)*<br>**217,420 req/s** *(in-process)* | **14.4 MB** | **2.58 ms** *(live TCP)*<br>**0.003 ms** *(in-process)* |
-| 9Router | Node.js / Next.js | 525 req/s | 131 MB | 86.4 ms |
-| OmniRoute | Node.js / TypeScript | 354 req/s | 424 MB | 123.1 ms |
-
----
+Run `9router bench --concurrency 50 --requests 1000` to measure the local Rust `/api/health` TCP endpoint. It reports successful and failed requests, throughput, median latency, and elapsed time. It does not measure provider routing, memory use, or other gateways; do not compare it with unrelated benchmark figures.
 
 ## 🖥️ Dashboard Surfaces
 
-The embedded single-page management application (Svelte 5, embedded by `rust-embed`) provides provider configuration, gateway usage, and quota views.
+React 19 and Vite dashboard source lives in `src/web/ui`; Rust embeds built static files from `src/web/assets`.
 
 Usage analytics aggregate persisted gateway request records by period. Live quota checks are supported for Antigravity and Codex connections with usable OAuth credentials; other providers and unavailable credentials are reported as unavailable rather than estimated.
 
@@ -120,7 +108,7 @@ src/
   ├── web/          # Unified Web UI subsystem
   │   ├── mod.rs    # Embedded asset server with no-cache headers & SPA fallback
   │   ├── assets/   # Static production distribution (embedded by rust-embed)
-  │   └── ui/       # Svelte 5 frontend project (App.svelte, app.css, Vite configuration)
+  │   └── ui/       # React 19 dashboard source and Vite build
   ├── lib.rs        # Library crate root
   └── main.rs       # Binary executable entrypoint
 ```
