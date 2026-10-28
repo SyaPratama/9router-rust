@@ -48,7 +48,7 @@ Browse and configure all 142 supported providers across OAuth, Free Tier, and AP
 </div>
 
 ### 2. Server-Side OAuth Connections
-Antigravity and Codex use server-generated authorization state, callback validation, code exchange, and provider account identity retrieval. Credentials stay in SQLite and are redacted from provider API responses. Other OAuth flows report unavailable until their provider-specific flow is implemented.
+Antigravity and Codex use server-generated authorization state, callback validation, code exchange, and provider account identity retrieval. Credentials stay in SQLite and are redacted from provider API responses; SQLite does not encrypt them at rest. Other OAuth flows report unavailable until their provider-specific flow is implemented.
 
 Register this exact callback URL with each OAuth client and configure the daemon before launch. Keep its host and port identical to the dashboard URL; change the example port to match `PORT`.
 
