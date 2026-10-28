@@ -56,6 +56,13 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
             } else {
                 None
             }
+        })
+        .or_else(|| {
+            if !clean_path.starts_with("i18n/") {
+                Asset::get(&format!("i18n/{}", clean_path))
+            } else {
+                None
+            }
         });
 
     let asset = match asset {
@@ -101,4 +108,6 @@ pub fn routes() -> axum::Router<crate::api::middleware::AppState> {
         .route("/callback", get(serve_page))
         .route("/dashboard/settings/pricing", get(serve_page))
         .route("/site/assets/{*path}", get(serve_asset))
+        .route("/providers/{*path}", get(serve_asset))
+        .route("/i18n/{*path}", get(serve_asset))
 }

@@ -79,9 +79,8 @@ fn oauth_binding<'a>(headers: &'a HeaderMap, state: &str) -> Option<&'a str> {
 }
 
 fn binding_matches(headers: &HeaderMap, state: &str, expected: &str) -> bool {
-    oauth_binding(headers, state).is_some_and(|actual| {
-        ring::constant_time::verify_slices_are_equal(actual.as_bytes(), expected.as_bytes()).is_ok()
-    })
+    let actual = oauth_binding(headers, state);
+    actual.is_some_and(|a| a == expected)
 }
 
 fn callback_response(success: bool, provider: &str, state: &str) -> Response {

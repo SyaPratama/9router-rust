@@ -229,3 +229,20 @@ pub async fn get_model_info(
         "supported_formats": ["json", "stream"]
     })))
 }
+pub async fn get_availability(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let all = get_all_models(&state);
+    let available = all
+        .iter()
+        .filter(|m| {
+            m.get("status").and_then(|s| s.as_str()) != Some("deprecated")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!({
+        "object": "list",
+        "data": available
+    })))
+}

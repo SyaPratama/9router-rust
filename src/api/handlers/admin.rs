@@ -3,7 +3,7 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use crate::api::middleware::AppState;
 use crate::db::repos::combos::{CombosRepo, ModelCombo};
 use crate::db::repos::connections::{ConnectionsRepo, ProviderConnection};
@@ -61,6 +61,45 @@ pub async fn get_settings(
     let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let settings = SettingsRepo::get(&conn).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(settings))
+}
+
+pub async fn patch_settings(
+    State(state): State<AppState>,
+    Json(patch): Json<Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let settings = SettingsRepo::get(&conn).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let settings = merge_settings(settings, &patch).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    SettingsRepo::save(&conn, &settings).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "success": true, "settings": settings })))
+}
+
+fn merge_settings(settings: SystemSettings, patch: &Value) -> Result<SystemSettings, String> {
+    let patch = patch.as_object().ok_or_else(|| "Settings patch must be a JSON object".to_string())?;
+    let mut merged = serde_json::to_value(settings).map_err(|e| e.to_string())?;
+    let target = merged.as_object_mut().ok_or_else(|| "Stored settings are not a JSON object".to_string())?;
+    for (key, value) in patch {
+        target.insert(key.clone(), value.clone());
+    }
+    serde_json::from_value(merged).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod settings_patch_tests {
+    use super::merge_settings;
+    use crate::db::repos::settings::SystemSettings;
+    use serde_json::json;
+
+    #[test]
+    fn partial_patch_preserves_existing_values_and_updates_extra_settings() {
+        let mut existing = SystemSettings::default();
+        existing.extra.insert("ccFilterNaming".into(), json!(true));
+        let updated = merge_settings(existing, &json!({ "comboStrategy": "priority" })).unwrap();
+        assert_eq!(updated.extra["ccFilterNaming"], true);
+        assert_eq!(updated.extra["comboStrategy"], "priority");
+        assert!(!updated.require_api_key);
+        assert!(merge_settings(updated, &json!(null)).is_err());
+    }
 }
 
 pub async fn update_settings(
@@ -478,19 +517,149 @@ pub async fn list_combos(
 
 pub async fn save_combo(
     State(state): State<AppState>,
-    Json(payload): Json<ModelCombo>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    CombosRepo::upsert(&conn, &payload).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(json!({ "success": true })))
+    Json(payload): Json<Value>,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let (name, models, kind) = combo_fields(&payload)
+        .map_err(|error| combo_error(StatusCode::BAD_REQUEST, error))?;
+    let conn = state.engine.pool.get()
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if CombosRepo::get_by_name(&conn, &name)
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .is_some()
+    {
+        return Err(combo_error(StatusCode::BAD_REQUEST, "Combo name already exists"));
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let combo = ModelCombo {
+        id: uuid::Uuid::new_v4().to_string(), name, kind, models,
+        created_at: now.clone(), updated_at: now,
+    };
+    CombosRepo::insert(&conn, &combo)
+        .map_err(|error| combo_error(StatusCode::CONFLICT, error.to_string()))?;
+    Ok((StatusCode::CREATED, Json(combo)))
+}
+
+pub async fn update_combo(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<Value>,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let conn = state.engine.pool.get()
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let mut combo = CombosRepo::get_by_id(&conn, &id)
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or_else(|| combo_error(StatusCode::NOT_FOUND, "Combo not found"))?;
+    let object = payload.as_object()
+        .ok_or_else(|| combo_error(StatusCode::BAD_REQUEST, "Combo must be a JSON object"))?;
+    if object.contains_key("name") {
+        combo.name = object.get("name").and_then(Value::as_str)
+            .filter(|name| valid_combo_name(name))
+            .ok_or_else(|| combo_error(StatusCode::BAD_REQUEST, "Name can only contain letters, numbers, -, _ and ."))?
+            .to_owned();
+    }
+    if object.contains_key("models") {
+        combo.models = combo_models(object.get("models"))
+            .map_err(|error| combo_error(StatusCode::BAD_REQUEST, error))?;
+    }
+    if object.contains_key("kind") {
+        combo.kind = combo_kind(object.get("kind"))
+            .map_err(|error| combo_error(StatusCode::BAD_REQUEST, error))?;
+    }
+    if let Some(existing) = CombosRepo::get_by_name(&conn, &combo.name)
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+    {
+        if existing.id != id {
+            return Err(combo_error(StatusCode::BAD_REQUEST, "Combo name already exists"));
+        }
+    }
+    combo.updated_at = chrono::Utc::now().to_rfc3339();
+    if !CombosRepo::update(&conn, &combo)
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+    {
+        return Err(combo_error(StatusCode::NOT_FOUND, "Combo not found"));
+    }
+    Ok(Json(combo))
+}
+
+pub async fn get_combo(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let conn = state.engine.pool.get()
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let combo = CombosRepo::get_by_id(&conn, &id)
+        .map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .ok_or_else(|| combo_error(StatusCode::NOT_FOUND, "Combo not found"))?;
+    Ok(Json(combo))
+}
+
+#[cfg(test)]
+mod combo_api_tests {
+    use super::{combo_fields, combo_models, combo_preset_items, valid_combo_name};
+    use serde_json::json;
+
+    #[test]
+    fn names_and_models_follow_combo_api_contract() {
+        assert!(valid_combo_name("Claude_Opus-5.v2"));
+        assert!(!valid_combo_name("../settings"));
+        assert!(combo_fields(&json!({ "name": "combo", "models": ["openai/model"] })).is_ok());
+        assert!(combo_models(Some(&json!(["ok", 7]))).is_err());
+        assert!(combo_models(Some(&json!("model"))).is_err());
+    }
+
+    #[test]
+    fn presets_use_catalog_models_and_skip_existing_combo_names() {
+        let existing = std::collections::HashSet::from(["default".to_string()]);
+        let cursor = combo_preset_items("cursor", &existing).unwrap();
+        assert!(cursor.iter().any(|item| item["name"] == "default" && item["models"][0] == "cu/default" && item["exists"] == true));
+        assert!(cursor.iter().any(|item| item["models"][0].as_str().unwrap().starts_with("cu/")));
+        let claude = combo_preset_items("claude", &existing).unwrap();
+        assert!(claude.iter().any(|item| item["name"] == "opusplan" && item["models"][0] == "cc/claude-opus-5"));
+        assert!(combo_preset_items("unknown", &existing).is_err());
+    }
+}
+
+fn combo_fields(payload: &Value) -> Result<(String, Vec<String>, Option<String>), &'static str> {
+    let object = payload.as_object().ok_or("Combo must be a JSON object")?;
+    let name = object.get("name").and_then(Value::as_str).unwrap_or_default();
+    if !valid_combo_name(name) {
+        return Err("Name can only contain letters, numbers, -, _ and .");
+    }
+    Ok((name.to_owned(), combo_models(object.get("models"))?, combo_kind(object.get("kind"))?))
+}
+
+fn combo_models(value: Option<&Value>) -> Result<Vec<String>, &'static str> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => items.iter().map(|item| item.as_str().map(str::to_owned).ok_or("Models must contain strings")).collect(),
+        _ => Err("Models must be an array"),
+    }
+}
+fn combo_kind(value: Option<&Value>) -> Result<Option<String>, &'static str> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(kind)) => Ok(Some(kind.clone())),
+        _ => Err("Kind must be a string or null"),
+    }
+}
+
+fn valid_combo_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+fn combo_error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<Value>) {
+    (status, Json(json!({ "error": message.into() })))
 }
 
 pub async fn delete_combo(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    CombosRepo::delete(&conn, &id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let conn = state.engine.pool.get().map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let deleted = CombosRepo::delete(&conn, &id).map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if !deleted {
+        return Err(combo_error(StatusCode::NOT_FOUND, "Combo not found"));
+    }
     Ok(Json(json!({ "success": true })))
 }
 
@@ -499,38 +668,91 @@ pub struct CombosPresetsQuery {
     pub source: Option<String>,
 }
 
+fn combo_preset_items(source: &str, existing: &std::collections::HashSet<String>) -> Result<Vec<Value>, String> {
+    let (provider_id, alias) = match source {
+        "cursor" => ("cursor", "cu"),
+        "claude" => ("claude", "cc"),
+        _ => return Err("source must be 'cursor' or 'claude'".into()),
+    };
+    let registry: Value = serde_json::from_str(CATALOG_JSON).map_err(|error| error.to_string())?;
+    let provider = registry.as_array().and_then(|providers| providers.iter().find(|provider| provider.get("id").and_then(Value::as_str) == Some(provider_id)))
+        .ok_or_else(|| format!("{provider_id} model catalog is unavailable"))?;
+    let mut seen = std::collections::HashSet::new();
+    let mut items = Vec::new();
+    if let Some(models) = provider.get("models").and_then(Value::as_array) {
+        for model in models {
+            if let Some(id) = model.get("id").and_then(Value::as_str).filter(|id| valid_combo_name(id)) {
+                if seen.insert(id.to_owned()) {
+                    items.push(json!({ "name": id, "models": [format!("{alias}/{id}")], "exists": existing.contains(id) }));
+                }
+            }
+        }
+    }
+    if source == "claude" {
+        for (name, target) in [
+            ("fable", "cc/claude-fable-5"),
+            ("opus", "cc/claude-opus-5"),
+            ("sonnet", "cc/claude-sonnet-5"),
+            ("haiku", "cc/claude-haiku-4-5-20251001"),
+            ("default", "cc/claude-sonnet-5"),
+            ("opusplan", "cc/claude-opus-5"),
+        ] {
+            if seen.insert(name.to_owned()) {
+                items.push(json!({ "name": name, "models": [target], "exists": existing.contains(name) }));
+            }
+        }
+    }
+    Ok(items)
+}
+
 pub async fn get_combo_presets(
     Query(query): Query<CombosPresetsQuery>,
-) -> impl IntoResponse {
-    let source = query.source.unwrap_or_else(|| "cursor".to_string());
-    let prefix = if source == "claude" { "cl" } else { "cu" };
-    let models = vec![
-        "default",
-        "claude-4.5-opus-high-thinking",
-        "claude-4.5-opus-high",
-        "claude-4.5-sonnet-thinking",
-        "claude-4.5-sonnet",
-        "claude-4.5-haiku",
-        "claude-4.5-opus",
-        "gpt-5.2-codex",
-        "claude-4.6-opus-max",
-    ];
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let source = query.source.ok_or_else(|| combo_error(StatusCode::BAD_REQUEST, "source must be 'cursor' or 'claude'"))?;
+    let conn = state.engine.pool.get().map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let existing = CombosRepo::list_all(&conn).map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .into_iter().map(|combo| combo.name).collect::<std::collections::HashSet<_>>();
+    let items = combo_preset_items(&source, &existing).map_err(|error| combo_error(StatusCode::BAD_REQUEST, error))?;
+    let to_create = items.iter().filter(|item| item["exists"] == false).count();
+    Ok(Json(json!({ "source": source, "items": items, "toCreate": to_create, "toSkip": items.len() - to_create })))
+}
 
-    let items: Vec<serde_json::Value> = models
-        .into_iter()
-        .map(|name| {
-            json!({
-                "name": name,
-                "models": [format!("{}/{}", prefix, name)],
-                "exists": false
-            })
-        })
-        .collect();
-
-    Json(json!({
-        "source": source,
-        "items": items
-    }))
+pub async fn save_combo_presets(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Result<impl IntoResponse, (StatusCode, Json<Value>)> {
+    let source = payload.get("source").and_then(Value::as_str)
+        .ok_or_else(|| combo_error(StatusCode::BAD_REQUEST, "source must be 'cursor' or 'claude'"))?;
+    let mut conn = state.engine.pool.get().map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let existing = CombosRepo::list_all(&conn).map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?
+        .into_iter().map(|combo| combo.name).collect::<std::collections::HashSet<_>>();
+    let items = combo_preset_items(source, &existing).map_err(|error| combo_error(StatusCode::BAD_REQUEST, error))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut created = Vec::new();
+    let mut skipped = Vec::new();
+    let tx = conn.transaction().map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    for item in items {
+        let name = item["name"].as_str().ok_or_else(|| combo_error(StatusCode::INTERNAL_SERVER_ERROR, "Preset name missing"))?;
+        if item["exists"] == true {
+            skipped.push(name.to_owned());
+            continue;
+        }
+        let combo = ModelCombo {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_owned(),
+            kind: None,
+            models: combo_models(item.get("models")).map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error))?,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        CombosRepo::insert(&tx, &combo).map_err(|error| combo_error(StatusCode::CONFLICT, error.to_string()))?;
+        created.push(combo);
+    }
+    tx.commit().map_err(|error| combo_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let created_count = created.len();
+    let skipped_count = skipped.len();
+    Ok(Json(json!({ "source": source, "created": created, "skipped": skipped, "createdCount": created_count, "skippedCount": skipped_count })))
 }
 
 // -------------------------------------------------------------
@@ -666,6 +888,7 @@ pub async fn get_usage_history(
     let analytics = UsageRepo::analytics(&conn, period, chrono::Utc::now())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(json!({
+        "stats": analytics["stats"],
         "history": analytics["history"],
         "breakdown": analytics["breakdown"],
         "period": period
@@ -678,6 +901,50 @@ pub struct UsageDetailsQuery {
     pub period: Option<String>,
     pub page: Option<usize>,
     pub page_size: Option<usize>,
+    pub provider: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+fn usage_filter_timestamp(value: Option<&str>, field: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, (StatusCode, String)> {
+    value.map(|value| chrono::DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+        .map_err(|_| (StatusCode::BAD_REQUEST, format!("Invalid {field} timestamp"))))
+        .transpose()
+}
+
+fn usage_record_matches(
+    record: &serde_json::Value,
+    provider: Option<&str>,
+    start: Option<&chrono::DateTime<chrono::Utc>>,
+    end: Option<&chrono::DateTime<chrono::Utc>>,
+) -> bool {
+    if provider.is_some_and(|provider| record["provider"].as_str() != Some(provider)) {
+        return false;
+    }
+    if start.is_none() && end.is_none() { return true; }
+    let Some(timestamp) = record["timestamp"].as_str()
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&chrono::Utc)) else { return false; };
+    start.map_or(true, |start| &timestamp >= start) && end.map_or(true, |end| &timestamp <= end)
+}
+
+#[cfg(test)]
+mod usage_details_filter_tests {
+    use super::{usage_filter_timestamp, usage_record_matches};
+    use axum::http::StatusCode;
+    use serde_json::json;
+
+    #[test]
+    fn filters_saved_records_by_provider_and_inclusive_timestamps() {
+        let start = usage_filter_timestamp(Some("2025-04-10T11:00:00Z"), "startDate").unwrap().unwrap();
+        let end = usage_filter_timestamp(Some("2025-04-10T11:30:00Z"), "endDate").unwrap().unwrap();
+        let row = json!({"provider":"p1","timestamp":"2025-04-10T11:00:00Z"});
+        assert!(usage_record_matches(&row, Some("p1"), Some(&start), Some(&end)));
+        assert!(!usage_record_matches(&row, Some("p2"), Some(&start), Some(&end)));
+        let outside = json!({"provider":"p1","timestamp":"2025-04-10T11:30:01Z"});
+        assert!(!usage_record_matches(&outside, Some("p1"), Some(&start), Some(&end)));
+        assert_eq!(usage_filter_timestamp(Some("invalid"), "startDate").unwrap_err().0, StatusCode::BAD_REQUEST);
+    }
 }
 
 pub async fn get_usage_request_details(
@@ -686,15 +953,26 @@ pub async fn get_usage_request_details(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let period = selected_usage_period(query.period.as_deref())?;
+    let start = usage_filter_timestamp(query.start_date.as_deref(), "startDate")?;
+    let end = usage_filter_timestamp(query.end_date.as_deref(), "endDate")?;
+    if let (Some(start), Some(end)) = (start.as_ref(), end.as_ref()) {
+        if start > end { return Err((StatusCode::BAD_REQUEST, "startDate must not be after endDate".to_string())); }
+    }
     let analytics = UsageRepo::analytics(&conn, period, chrono::Utc::now())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let records = analytics["history"].as_array().cloned().unwrap_or_default();
+    let records = records.into_iter().filter(|record| usage_record_matches(
+        record,
+        query.provider.as_deref(),
+        start.as_ref(),
+        end.as_ref(),
+    )).collect::<Vec<_>>();
     let page_size = query.page_size.unwrap_or(20).clamp(1, 200);
     let page = query.page.unwrap_or(1).max(1);
     let total = records.len();
-    let start = (page - 1).saturating_mul(page_size).min(total);
-    let end = start.saturating_add(page_size).min(total);
-    let details = records[start..end].to_vec();
+    let start_index = (page - 1).saturating_mul(page_size).min(total);
+    let end_index = start_index.saturating_add(page_size).min(total);
+    let details = records[start_index..end_index].to_vec();
     let total_pages = total.div_ceil(page_size);
     Ok(Json(json!({
         "details": details,
@@ -790,8 +1068,8 @@ fn antigravity_quotas(data: &serde_json::Value, is_free_tier: bool) -> serde_jso
                 if !ANTIGRAVITY_IMPORTANT_MODELS.contains(&model.as_str())
                     || info.get("isInternal").and_then(|value| value.as_bool()) == Some(true) { continue; }
                 let Some(quota) = info.get("quotaInfo") else { continue };
-                let fraction = quota.get("remainingFraction").and_then(|value| value.as_f64()).unwrap_or(0.0);
-                if !fraction.is_finite() { continue; }
+                let Some(fraction) = quota.get("remainingFraction").and_then(|value| value.as_f64()) else { continue };
+                if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) { continue; }
                 quotas.insert(model.clone(), quota_window(
                     100.0 - fraction.clamp(0.0, 1.0) * 100.0,
                     100.0,
@@ -947,7 +1225,8 @@ async fn fetch_connection_quota(pool: &crate::db::DbPool, connection: &ProviderC
                     reconcile_antigravity_sessions(&mut quotas);
                     let plan = subscription.as_ref().and_then(|value| value.pointer("/currentTier/name"))
                         .and_then(|value| value.as_str()).unwrap_or("Unknown");
-                    json!({"plan": plan, "quotas": quotas})
+                    let message = if quotas.is_empty() { Some("Antigravity did not return quota data for this connection.") } else { None };
+                    json!({"plan": plan, "quotas": quotas, "message": message})
                 }
                 Err(_) => json!({"plan": null, "quotas": {}, "message": "Antigravity returned an invalid quota response."}),
             },
@@ -958,10 +1237,11 @@ async fn fetch_connection_quota(pool: &crate::db::DbPool, connection: &ProviderC
         match client.get("https://chatgpt.com/backend-api/wham/usage")
             .bearer_auth(&access_token).header("Accept", "application/json").send().await {
             Ok(response) if response.status().is_success() => match response.json::<serde_json::Value>().await {
-                Ok(data) => json!({
-                    "plan": data.get("plan_type").or_else(|| data.pointer("summary.plan")),
-                    "quotas": codex_quotas(&data)
-                }),
+                Ok(data) => {
+                    let quotas = codex_quotas(&data);
+                    let message = if quotas.is_empty() { Some("Codex did not return quota data for this connection.") } else { None };
+                    json!({ "plan": data.get("plan_type").or_else(|| data.pointer("summary.plan")), "quotas": quotas, "message": message })
+                }
                 Err(_) => json!({"plan": null, "quotas": {}, "message": "Codex returned an invalid quota response."}),
             },
             Ok(response) => json!({"plan": null, "quotas": {}, "message": format!("Codex quota API unavailable (HTTP {}).", response.status().as_u16())}),
@@ -1075,6 +1355,48 @@ pub async fn toggle_headroom(
     Ok(Json(json!({ "success": true, "settings": settings })))
 }
 
+pub async fn get_headroom_extras(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let settings = SettingsRepo::get(&conn).unwrap_or_default();
+    Ok(Json(json!({
+        "success": true,
+        "extras": settings.extra.get("headroom_code").or(settings.extra.get("headroom_ml")).map(|_| true)
+    })))
+}
+
+pub async fn toggle_headroom_extras(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut settings = SettingsRepo::get(&conn).unwrap_or_default();
+
+    if let Some(extras) = payload.get("extras").and_then(|e| e.as_object()) {
+        for (key, value) in extras {
+            if let Some(b) = value.as_bool() {
+                settings.extra.insert(format!("headroom_{}", key), json!(b));
+            }
+        }
+    }
+
+    SettingsRepo::save(&conn, &settings).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "success": true, "settings": settings })))
+}
+
+pub async fn delete_headroom_extras(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut settings = SettingsRepo::get(&conn).unwrap_or_default();
+
+    settings.extra.remove("headroom_code");
+    settings.extra.remove("headroom_ml");
+
+    SettingsRepo::save(&conn, &settings).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(json!({ "success": true })))
+}
 // -------------------------------------------------------------
 // CLI Tools Status Handler
 // -------------------------------------------------------------
@@ -1172,12 +1494,18 @@ mod quota_tests {
             "gemini-3.8-flash-medium": {"isInternal": true, "quotaInfo": {"remainingFraction": 0.5}},
             "gemini-3.8-flash-other": {"quotaInfo": {"remainingFraction": 0.5}},
             "unlisted": {"quotaInfo": {"remainingFraction": 0.5}},
-            "without-quota": {"displayName": "No quota"}
+            "without-quota": {"displayName": "No quota"},
+            "gemini-3.8-flash-low": {"displayName": "Incomplete quota", "quotaInfo": {}}
         }});
         let mut quotas = antigravity_quotas(&data, false);
         assert_eq!(quotas.len(), 1);
         assert_eq!(quotas["gemini-3.8-flash-high"]["used"], 75.0);
         assert_eq!(quotas["gemini-3.8-flash-high"]["remainingPercentage"], 25.0);
+        let malformed = json!({"models": {
+            "gemini-3.8-flash-high": {"quotaInfo": {"remainingFraction": 1.5}},
+            "gemini-3.8-flash-medium": {"quotaInfo": {"remainingFraction": "0.5"}}
+        }});
+        assert!(antigravity_quotas(&malformed, false).is_empty());
         assert!(antigravity_quotas(&data, true).is_empty());
         antigravity_weekly_quotas(&json!({"groups": [{
             "displayName": "Gemini",
@@ -1233,4 +1561,13 @@ mod quota_tests {
         assert_eq!(quotas["session"]["resetAt"], "2027-01-15T08:00:00+00:00");
         assert_eq!(quotas["weekly"]["resetAt"], "2027-01-15T08:01:40+00:00");
     }
+}
+pub async fn list_provider_nodes() -> impl IntoResponse {
+    Json(json!({
+        "nodes": [
+            {"id": "node-1", "type": "provider", "name": "OpenAI", "status": "online"},
+            {"id": "node-2", "type": "provider", "name": "Anthropic", "status": "online"},
+            {"id": "node-3", "type": "provider", "name": "Google", "status": "online"}
+        ]
+    }))
 }

@@ -12,10 +12,12 @@ pub fn build_router(engine: Arc<RoutingEngine>) -> Router {
     let state = AppState {
         engine,
         oauth_sessions: Arc::default(),
+        auth_sessions: Arc::default(),
     };
 
     Router::new()
         .merge(v1::routes())
+        .nest("/api", v1::routes())
         .merge(admin::routes())
         .merge(auth::routes())
         .merge(crate::web::routes())

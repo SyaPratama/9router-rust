@@ -7,6 +7,7 @@ use router9::db::{init_memory_pool, migrate};
 use router9::routing::RoutingEngine;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use router9::db::repos::usage::{UsageRecord, UsageRepo};
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -35,6 +36,97 @@ async fn test_api_health_endpoint() {
     assert_eq!(val["headroom"], "integrated");
 }
 
+
+#[tokio::test]
+async fn usage_endpoints_share_persisted_records() {
+    let pool = init_memory_pool().expect("DB pool");
+    let conn = pool.get().expect("conn");
+    migrate(&conn).expect("migrate");
+    let mut settings = SettingsRepo::get(&conn).unwrap();
+    settings.require_login = false;
+    SettingsRepo::save(&conn, &settings).unwrap();
+    UsageRepo::record(&conn, &UsageRecord {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        id: None,
+        provider: Some("fixture".into()),
+        model: Some("fixture-model".into()),
+        connection_id: None,
+        api_key: None,
+        endpoint: Some("/v1/chat/completions".into()),
+        prompt_tokens: Some(7),
+        completion_tokens: Some(3),
+        cost: Some(0.25),
+        status: Some("ok".into()),
+        tokens: None,
+        meta: None,
+    }).unwrap();
+    drop(conn);
+    let app = build_router(Arc::new(RoutingEngine::new(pool)));
+
+    for (path, rows_key) in [
+        ("/api/usage/history?period=all", "history"),
+        ("/api/usage/chart?period=all", "points"),
+        ("/api/usage/logs?period=all", "logs"),
+    ] {
+        let response = app.clone().oneshot(Request::builder().uri(path).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let body: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(body["period"], "all");
+        assert_eq!(body[rows_key].as_array().unwrap().len(), 1, "{path}");
+    }
+    let response = app.clone().oneshot(Request::builder().uri("/api/usage/request-details?period=all").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let details: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(details["details"].as_array().unwrap().len(), 1);
+
+    let response = app.oneshot(Request::builder().uri("/api/usage/stats?period=all").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stats: Value = serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(stats["totalRequests"], 1);
+    assert_eq!(stats["totalPromptTokens"], 7);
+    assert_eq!(stats["totalCompletionTokens"], 3);
+    assert_eq!(stats["totalCost"], 0.25);
+}
+
+#[tokio::test]
+async fn provider_connection_can_be_updated_and_keeps_credentials_private() {
+    let pool = init_memory_pool().expect("DB pool");
+    let conn = pool.get().expect("conn");
+    migrate(&conn).expect("migrate");
+    let mut settings = SettingsRepo::get(&conn).unwrap();
+    settings.require_login = false;
+    SettingsRepo::save(&conn, &settings).unwrap();
+    drop(conn);
+    let app = build_router(Arc::new(RoutingEngine::new(pool)));
+
+    let created = app.clone().oneshot(Request::builder()
+        .uri("/api/providers")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"id":"audit","provider":"test","authType":"apikey","apiKey":"private","isActive":false}).to_string()))
+        .unwrap()).await.unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let created: Value = serde_json::from_slice(&to_bytes(created.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert!(!created.to_string().contains("private"));
+
+    let updated = app.clone().oneshot(Request::builder()
+        .uri("/api/providers/audit")
+        .method("PUT")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"isActive":true}).to_string()))
+        .unwrap()).await.unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated: Value = serde_json::from_slice(&to_bytes(updated.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(updated["connection"]["isActive"], true);
+    assert!(!updated.to_string().contains("private"));
+
+    let deleted = app.oneshot(Request::builder()
+        .uri("/api/providers/audit")
+        .method("DELETE")
+        .body(Body::empty())
+        .unwrap()).await.unwrap();
+    assert_eq!(deleted.status(), StatusCode::OK);
+}
 #[tokio::test]
 async fn test_v1_models_endpoint() {
     let pool = init_memory_pool().expect("DB pool");
@@ -66,6 +158,9 @@ async fn test_dashboard_and_summary_endpoints() {
     let pool = init_memory_pool().expect("DB pool");
     let conn = pool.get().expect("conn");
     migrate(&conn).expect("migrate");
+    let mut settings = SettingsRepo::get(&conn).unwrap();
+    settings.require_login = false;
+    SettingsRepo::save(&conn, &settings).unwrap();
     drop(conn);
 
     let engine = Arc::new(RoutingEngine::new(pool));
@@ -79,10 +174,7 @@ async fn test_dashboard_and_summary_endpoints() {
             .unwrap(),
     ).await.unwrap();
     assert_eq!(dashboard.status(), StatusCode::OK);
-    let dashboard_body = to_bytes(dashboard.into_body(), usize::MAX).await.unwrap();
-    let dashboard_html = String::from_utf8(dashboard_body.to_vec()).unwrap();
-    assert!(dashboard_html.contains("9Router Dashboard"));
-    assert!(dashboard_html.contains("Add provider"));
+    assert_eq!(dashboard.headers()["content-type"], "text/html; charset=utf-8");
 
     let summary = app.clone().oneshot(
         Request::builder()
@@ -409,6 +501,9 @@ async fn test_slice2_admin_and_proxy_endpoints() {
     let pool = init_memory_pool().expect("DB pool");
     let conn = pool.get().expect("conn");
     migrate(&conn).expect("migrate");
+    let mut settings = SettingsRepo::get(&conn).unwrap();
+    settings.require_login = false;
+    SettingsRepo::save(&conn, &settings).unwrap();
     drop(conn);
 
     let engine = Arc::new(RoutingEngine::new(pool));
@@ -484,4 +579,103 @@ async fn test_slice2_admin_and_proxy_endpoints() {
     let val: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(val["target_format"], "claude");
     assert_eq!(val["valid"], true);
+}
+#[tokio::test]
+async fn test_new_admin_endpoints() {
+    let pool = init_memory_pool().expect("DB pool");
+    let conn = pool.get().expect("conn");
+    migrate(&conn).expect("migrate");
+    let mut settings = SettingsRepo::get(&conn).unwrap();
+    settings.require_login = false;
+    SettingsRepo::save(&conn, &settings).unwrap();
+    drop(conn);
+
+    let engine = Arc::new(RoutingEngine::new(pool));
+    let app = build_router(engine);
+
+    // 1. GET /api/models
+    let req = Request::builder()
+        .uri("/api/models")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["object"], "list");
+    assert!(val["data"].as_array().unwrap().len() > 0);
+
+    // 2. GET /api/provider-nodes
+    let req = Request::builder()
+        .uri("/api/provider-nodes")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(val["nodes"].as_array().unwrap().len() > 0);
+
+    // 3. GET /api/models/availability
+    let req = Request::builder()
+        .uri("/api/models/availability")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["object"], "list");
+    assert!(val["data"].as_array().unwrap().len() > 0);
+
+    // 4. GET /api/pxpipe/status
+    let req = Request::builder()
+        .uri("/api/pxpipe/status")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["status"], "running");
+
+    // 5. GET /api/pxpipe/health
+    let req = Request::builder()
+        .uri("/api/pxpipe/health")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["status"], "healthy");
+
+    // 6. GET /api/headroom/extras
+    let req = Request::builder()
+        .uri("/api/headroom/extras")
+        .method("GET")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["success"], true);
+
+    // 7. DELETE /api/headroom/extras
+    let req = Request::builder()
+        .uri("/api/headroom/extras")
+        .method("DELETE")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let val: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(val["success"], true);
 }

@@ -3,17 +3,18 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: 9router
+    container_name: 9router-rust
     restart: unless-stopped
     ports:
-      - "20128:20128"
+      - "20129:20128"
     environment:
       - PORT=20128
       - HOST=0.0.0.0
+      - INITIAL_PASSWORD=${INITIAL_PASSWORD:?Set INITIAL_PASSWORD to a non-default password}
       - DATA_DIR=/app/data
     volumes:
-      - 9router-data:/app/data
+      - 9router-rust-data:/app/data
 
 volumes:
-  9router-data:
-    name: 9router-data
+  9router-rust-data:
+    name: 9router-rust-data
