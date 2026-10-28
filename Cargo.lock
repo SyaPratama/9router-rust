@@ -1465,6 +1465,7 @@ dependencies = [
  "r2d2_sqlite",
  "regex",
  "reqwest",
+ "ring",
  "rusqlite",
  "rust-embed",
  "serde",

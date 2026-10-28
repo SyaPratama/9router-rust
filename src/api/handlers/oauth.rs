@@ -1,4 +1,4 @@
-use axum::{extract::{Path, Query, State}, http::{header::ORIGIN, HeaderMap}, response::Html, Json};
+use axum::{extract::{Path, Query, State}, http::{header::{COOKIE, ORIGIN, SET_COOKIE}, HeaderMap, HeaderValue, StatusCode}, response::{Html, IntoResponse, Response}, Json};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{Duration, Utc};
 use serde::Deserialize;
@@ -13,7 +13,7 @@ struct OAuthProvider {
     client_secret_env: Option<&'static str>,
     authorize_url: &'static str,
     token_url: &'static str,
-    userinfo_url: &'static str,
+    userinfo_url: Option<&'static str>,
     scopes: &'static str,
     pkce: bool,
 }
@@ -26,7 +26,7 @@ fn provider(id: &str) -> Option<OAuthProvider> {
             client_secret_env: Some("ANTIGRAVITY_OAUTH_CLIENT_SECRET"),
             authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
-            userinfo_url: "https://www.googleapis.com/oauth2/v2/userinfo",
+            userinfo_url: Some("https://www.googleapis.com/oauth2/v2/userinfo"),
             scopes: "https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/cloud-platform openid email profile",
             pkce: false,
         }),
@@ -36,12 +36,17 @@ fn provider(id: &str) -> Option<OAuthProvider> {
             client_secret_env: None,
             authorize_url: "https://auth.openai.com/oauth/authorize",
             token_url: "https://auth.openai.com/oauth/token",
-            userinfo_url: "https://auth.openai.com/userinfo",
+            userinfo_url: None,
             scopes: "openid profile email offline_access",
             pkce: true,
         }),
         _ => None,
     }
+}
+
+fn jwt_claims(token: &str) -> Option<Value> {
+    let payload = token.split('.').nth(1)?;
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
 }
 
 fn validate_redirect_uri(value: &str) -> Result<(), &'static str> {
@@ -67,27 +72,56 @@ fn code_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
+fn oauth_binding<'a>(headers: &'a HeaderMap, state: &str) -> Option<&'a str> {
+    let name = format!("oauth_binding_{state}=");
+    headers.get(COOKIE)?.to_str().ok()?.split(';').map(str::trim)
+        .find_map(|cookie| cookie.strip_prefix(&name))
+}
+
+fn binding_matches(headers: &HeaderMap, state: &str, expected: &str) -> bool {
+    oauth_binding(headers, state).is_some_and(|actual| {
+        ring::constant_time::verify_slices_are_equal(actual.as_bytes(), expected.as_bytes()).is_ok()
+    })
+}
+
+fn callback_response(success: bool, provider: &str, state: &str) -> Response {
+    let mut response = callback_page(success, provider).into_response();
+    if let Ok(cookie) = HeaderValue::from_str(&format!(
+        "oauth_binding_{state}=; HttpOnly; SameSite=Lax; Path=/api/oauth; Max-Age=0"
+    )) {
+        response.headers_mut().append(SET_COOKIE, cookie);
+    }
+    response
+}
+
 pub async fn start(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(provider_id): Path<String>,
-) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
+) -> Result<Response, (StatusCode, Json<Value>)> {
     let fail = |status, message: &str| (status, Json(json!({ "error": message })));
-    let profile = provider(&provider_id).ok_or_else(|| fail(axum::http::StatusCode::NOT_IMPLEMENTED, "OAuth flow is not implemented for this provider."))?;
-    let client_id = std::env::var(profile.client_id_env).map_err(|_| fail(axum::http::StatusCode::SERVICE_UNAVAILABLE, "OAuth client is not configured for this provider."))?;
+    let profile = provider(&provider_id).ok_or_else(|| fail(StatusCode::NOT_IMPLEMENTED, "OAuth flow is not implemented for this provider."))?;
+    let client_id = std::env::var(profile.client_id_env).map_err(|_| fail(StatusCode::SERVICE_UNAVAILABLE, "OAuth client is not configured for this provider."))?;
     if let Some(secret_env) = profile.client_secret_env {
-        std::env::var(secret_env).map_err(|_| fail(axum::http::StatusCode::SERVICE_UNAVAILABLE, "OAuth client secret is not configured for this provider."))?;
+        std::env::var(secret_env).map_err(|_| fail(StatusCode::SERVICE_UNAVAILABLE, "OAuth client secret is not configured for this provider."))?;
     }
-    let redirect_uri = redirect_uri().map_err(|message| fail(axum::http::StatusCode::SERVICE_UNAVAILABLE, message))?;
+    let redirect_uri = redirect_uri().map_err(|message| fail(StatusCode::SERVICE_UNAVAILABLE, message))?;
     if let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) {
-        let callback_origin = Url::parse(&redirect_uri).map_err(|_| fail(axum::http::StatusCode::SERVICE_UNAVAILABLE, "Invalid OAuth callback URL."))?.origin().ascii_serialization();
-        if origin != callback_origin {
-            return Err(fail(axum::http::StatusCode::FORBIDDEN, "OAuth authorization must start from the configured dashboard origin."));
+        let origin_url = Url::parse(origin).map_err(|_| fail(StatusCode::FORBIDDEN, "Invalid OAuth request origin."))?;
+        let callback_url = Url::parse(&redirect_uri).map_err(|_| fail(StatusCode::SERVICE_UNAVAILABLE, "Invalid OAuth callback URL."))?;
+        let local = |url: &Url| url.scheme() == "http" && url.host_str().is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]"));
+        let same_origin = origin_url.origin() == callback_url.origin();
+        let same_loopback_host = local(&origin_url) && local(&callback_url)
+            && origin_url.scheme() == callback_url.scheme()
+            && origin_url.host_str() == callback_url.host_str();
+        if !same_origin && !same_loopback_host {
+            return Err(fail(StatusCode::FORBIDDEN, "Use the same hostname for the dashboard and registered OAuth callback."));
         }
     }
     let state_token = uuid::Uuid::new_v4().to_string();
+    let browser_binding = uuid::Uuid::new_v4().simple().to_string();
     let verifier = profile.pkce.then(code_verifier);
-    let mut auth_url = Url::parse(profile.authorize_url).map_err(|_| fail(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Invalid OAuth provider configuration."))?;
+    let mut auth_url = Url::parse(profile.authorize_url).map_err(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "Invalid OAuth provider configuration."))?;
     {
         let mut query = auth_url.query_pairs_mut();
         query.append_pair("client_id", &client_id)
@@ -103,19 +137,26 @@ pub async fn start(
                 .append_pair("code_challenge_method", "S256");
         }
     }
-    let mut sessions = state.oauth_sessions.lock().map_err(|_| fail(axum::http::StatusCode::INTERNAL_SERVER_ERROR, "OAuth session store is unavailable."))?;
+    let mut sessions = state.oauth_sessions.lock().map_err(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "OAuth session store is unavailable."))?;
     let now = Utc::now();
     sessions.retain(|_, session| session.expires_at > now);
     if sessions.len() >= 1024 {
-        return Err(fail(axum::http::StatusCode::TOO_MANY_REQUESTS, "Too many pending OAuth sessions."));
+        return Err(fail(StatusCode::TOO_MANY_REQUESTS, "Too many pending OAuth sessions."));
     }
+    let secure = if Url::parse(&redirect_uri).is_ok_and(|url| url.scheme() == "https") { "; Secure" } else { "" };
     sessions.insert(state_token.clone(), OAuthSession {
         provider: profile.id.to_string(),
         redirect_uri,
+        browser_binding: browser_binding.clone(),
         verifier,
         expires_at: now + Duration::minutes(10),
     });
-    Ok(Json(json!({ "authUrl": auth_url.as_str() })))
+    let cookie = HeaderValue::from_str(&format!(
+        "oauth_binding_{state_token}={browser_binding}; HttpOnly; SameSite=Lax; Path=/api/oauth; Max-Age=600{secure}"
+    )).map_err(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "Could not create OAuth browser binding."))?;
+    let mut response = Json(json!({ "authUrl": auth_url.as_str() })).into_response();
+    response.headers_mut().append(SET_COOKIE, cookie);
+    Ok(response)
 }
 
 #[derive(Deserialize)]
@@ -127,19 +168,26 @@ pub struct CallbackQuery {
 
 pub async fn callback(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<CallbackQuery>,
-) -> Html<String> {
-    let Some(state_token) = query.state else { return callback_page(false, "") };
+) -> Response {
+    let Some(state_token) = query.state else { return callback_page(false, "").into_response() };
     let session = state.oauth_sessions.lock().ok().and_then(|mut sessions| sessions.remove(&state_token));
-    let Some(session) = session.filter(|session| session.expires_at > Utc::now()) else { return callback_page(false, "") };
-    if query.error.is_some() { return callback_page(false, "") }
-    let Some(code) = query.code.filter(|code| !code.is_empty()) else { return callback_page(false, "") };
-    let Some(profile) = provider(&session.provider) else { return callback_page(false, "") };
-    let Ok(client_id) = std::env::var(profile.client_id_env) else { return callback_page(false, "") };
+    let Some(session) = session.filter(|session| session.expires_at > Utc::now()) else {
+        return callback_response(false, "", &state_token);
+    };
+    if !binding_matches(&headers, &state_token, &session.browser_binding) || query.error.is_some() {
+        return callback_response(false, "", &state_token);
+    }
+    let Some(code) = query.code.filter(|code| !code.is_empty()) else {
+        return callback_response(false, "", &state_token);
+    };
+    let Some(profile) = provider(&session.provider) else { return callback_response(false, "", &state_token) };
+    let Ok(client_id) = std::env::var(profile.client_id_env) else { return callback_response(false, "", &state_token) };
     let client_secret = profile.client_secret_env.and_then(|name| std::env::var(name).ok());
-    if profile.client_secret_env.is_some() && client_secret.is_none() { return callback_page(false, "") }
+    if profile.client_secret_env.is_some() && client_secret.is_none() { return callback_response(false, "", &state_token) }
     let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(20)).build();
-    let Ok(client) = client else { return callback_page(false, "") };
+    let Ok(client) = client else { return callback_response(false, "", &state_token) };
     let mut form = vec![
         ("grant_type", "authorization_code".to_string()),
         ("client_id", client_id),
@@ -151,21 +199,28 @@ pub async fn callback(
     let token_response = client.post(profile.token_url)
         .header(reqwest::header::ACCEPT, "application/json")
         .form(&form).send().await;
-    let Ok(token_response) = token_response else { return callback_page(false, "") };
-    if !token_response.status().is_success() { return callback_page(false, "") }
-    let Ok(tokens) = token_response.json::<Value>().await else { return callback_page(false, "") };
+    let Ok(token_response) = token_response else { return callback_response(false, "", &state_token) };
+    if !token_response.status().is_success() { return callback_response(false, "", &state_token) }
+    let Ok(tokens) = token_response.json::<Value>().await else { return callback_response(false, "", &state_token) };
     let Some(access_token) = tokens.get("access_token").and_then(Value::as_str).filter(|value| !value.is_empty()) else {
-        return callback_page(false, "");
+        return callback_response(false, "", &state_token);
     };
-    let user_response = client.get(profile.userinfo_url).bearer_auth(access_token).send().await;
-    let Ok(user_response) = user_response else { return callback_page(false, "") };
-    if !user_response.status().is_success() { return callback_page(false, "") }
-    let Ok(user) = user_response.json::<Value>().await else { return callback_page(false, "") };
-    let Some(email) = user.get("email").and_then(Value::as_str).filter(|email| !email.is_empty()) else {
-        return callback_page(false, "");
+    let user = if profile.id == "codex" {
+        tokens.get("id_token").and_then(Value::as_str).and_then(jwt_claims)
+            .or_else(|| jwt_claims(access_token))
+    } else {
+        let user_response = client.get(profile.userinfo_url.unwrap()).bearer_auth(access_token).send().await;
+        let Ok(user_response) = user_response else { return callback_response(false, "", &state_token) };
+        if !user_response.status().is_success() { return callback_response(false, "", &state_token) }
+        let Ok(user) = user_response.json::<Value>().await else { return callback_response(false, "", &state_token) };
+        Some(user)
     };
+    let Some(user) = user else { return callback_response(false, "", &state_token) };
+    let email = user.get("email").or_else(|| user.get("preferred_username"))
+        .or_else(|| user.get("sub")).and_then(Value::as_str).filter(|email| !email.is_empty());
+    let Some(email) = email else { return callback_response(false, "", &state_token) };
     if profile.id == "antigravity" && user.get("verified_email").and_then(Value::as_bool) != Some(true) {
-        return callback_page(false, "");
+        return callback_response(false, "", &state_token);
     }
     let now = Utc::now();
     let expires_at = tokens.get("expires_in").and_then(Value::as_i64)
@@ -195,16 +250,16 @@ pub async fn callback(
     };
     let saved = state.engine.pool.get().ok()
         .and_then(|conn| ConnectionsRepo::upsert(&conn, &connection).ok()).is_some();
-    callback_page(saved, profile.id)
+    callback_response(saved, profile.id, &state_token)
 }
 
-fn callback_page(success: bool, provider: &str) -> Html<String> {
-    let provider = if matches!(provider, "antigravity" | "codex") { provider } else { "" };
+fn callback_page(success: bool, provider_id: &str) -> Html<String> {
+    let provider = if provider(provider_id).is_some() { serde_json::to_string(provider_id).unwrap_or_else(|_| "\"\"".into()) } else { "\"\"".into() };
     let message = if success { "Account connected. You can close this window." } else { "Sign-in failed. Return to 9Router and try again." };
     let notification = if success {
-        format!("if(window.opener)window.opener.postMessage({{type:'oauth_callback',provider:'{provider}',success:true}},window.location.origin);")
+        format!("if(window.opener)window.opener.postMessage({{type:'oauth_callback',provider:{provider},success:true}},window.location.origin);")
     } else { String::new() };
-    Html(format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>9Router OAuth</title><body style=\"font:16px system-ui;max-width:36rem;margin:15vh auto;padding:1rem;background:#0b1020;color:#eef2ff\"><h1>{message}</h1><p>Return to your 9Router dashboard.</p><script>{notification}if(window.opener&&{success})window.close();</script></body></html>"))
+    Html(format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"referrer\" content=\"no-referrer\"><title>9Router OAuth</title><body style=\"font:16px system-ui;max-width:36rem;margin:15vh auto;padding:1rem;background:#0b1020;color:#eef2ff\"><h1>{message}</h1><p>Return to your 9Router dashboard.</p><script>{notification}if(window.opener&&{success})window.close();</script></body></html>"))
 }
 pub async fn access_token(
     pool: &crate::db::DbPool,
@@ -257,7 +312,10 @@ pub async fn access_token(
 
 #[cfg(test)]
 mod tests {
-    use super::{code_challenge, provider, validate_redirect_uri};
+    use super::{binding_matches, code_challenge, jwt_claims, provider, validate_redirect_uri};
+    use axum::http::{header::COOKIE, HeaderMap, HeaderValue};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+    use serde_json::json;
 
     #[test]
     fn pkce_challenge_uses_s256_base64url_without_padding() {
@@ -269,6 +327,23 @@ mod tests {
         assert!(provider("antigravity").is_some());
         assert!(provider("codex").is_some());
         assert!(provider("cursor").is_none());
+    }
+
+    #[test]
+    fn codex_identity_is_read_from_id_token_claims() {
+        let claims = json!({ "email": "codex@example.com", "name": "Codex" });
+        let token = format!("header.{}.signature", URL_SAFE_NO_PAD.encode(claims.to_string()));
+        assert_eq!(jwt_claims(&token).unwrap()["email"], "codex@example.com");
+        assert!(jwt_claims("not-a-jwt").is_none());
+    }
+
+    #[test]
+    fn callback_requires_the_matching_browser_binding_cookie() {
+        let mut headers = HeaderMap::new();
+        headers.insert(COOKIE, HeaderValue::from_static("oauth_binding_state-1=secret"));
+        assert!(binding_matches(&headers, "state-1", "secret"));
+        assert!(!binding_matches(&headers, "state-1", "other"));
+        assert!(!binding_matches(&headers, "state-2", "secret"));
     }
 
     #[test]

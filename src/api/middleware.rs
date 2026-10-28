@@ -13,6 +13,7 @@ use crate::routing::RoutingEngine;
 pub struct OAuthSession {
     pub provider: String,
     pub redirect_uri: String,
+    pub browser_binding: String,
     pub verifier: Option<String>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }

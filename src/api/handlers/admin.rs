@@ -793,8 +793,8 @@ fn antigravity_quotas(data: &serde_json::Value, is_free_tier: bool) -> serde_jso
                 let fraction = quota.get("remainingFraction").and_then(|value| value.as_f64()).unwrap_or(0.0);
                 if !fraction.is_finite() { continue; }
                 quotas.insert(model.clone(), quota_window(
-                    (1.0 - fraction.clamp(0.0, 1.0)) * 1000.0,
-                    1000.0,
+                    100.0 - fraction.clamp(0.0, 1.0) * 100.0,
+                    100.0,
                     quota.get("resetTime"),
                     info.get("displayName").and_then(|value| value.as_str()).unwrap_or(model),
                 ));
@@ -847,8 +847,8 @@ fn antigravity_weekly_quotas(data: &serde_json::Value, quotas: &mut serde_json::
             let key = format!("{}_{}", family, if weekly { "weekly" } else { "session" });
             let name = format!("{} ({})", if family == "gemini" { "Gemini" } else { "Claude & GPT" }, if weekly { "Weekly" } else { "5h" });
             quotas.entry(key).or_insert_with(|| quota_window(
-                (1.0 - fraction.clamp(0.0, 1.0)) * 1000.0,
-                1000.0,
+                (1.0 - fraction.clamp(0.0, 1.0)) * 100.0,
+                100.0,
                 bucket.get("resetTime"),
                 &name,
             ));
@@ -1176,7 +1176,7 @@ mod quota_tests {
         }});
         let mut quotas = antigravity_quotas(&data, false);
         assert_eq!(quotas.len(), 1);
-        assert_eq!(quotas["gemini-3.8-flash-high"]["used"], 750.0);
+        assert_eq!(quotas["gemini-3.8-flash-high"]["used"], 75.0);
         assert_eq!(quotas["gemini-3.8-flash-high"]["remainingPercentage"], 25.0);
         assert!(antigravity_quotas(&data, true).is_empty());
         antigravity_weekly_quotas(&json!({"groups": [{
