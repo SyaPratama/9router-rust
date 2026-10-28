@@ -9,7 +9,7 @@
 
   [![License: MIT](https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-blue.svg)](./LICENSE)
   [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg?logo=rust)](https://www.rust-lang.org/)
-  [![GitHub Release](https://img.shields.io/badge/Release-v0.0.21-10b981.svg?logo=github)](https://github.com/SyaPratama/9router-rust/releases/tag/v0.0.21)
+  [![GitHub Release](https://img.shields.io/badge/Release-v0.0.22-10b981.svg?logo=github)](https://github.com/SyaPratama/9router-rust/releases/tag/v0.0.22)
   [![Memory](https://img.shields.io/badge/RAM-%3C15MB-success.svg)]()
   [![Throughput](https://img.shields.io/badge/Throughput-15k%2B%20req%2Fs-blue.svg)]()
 

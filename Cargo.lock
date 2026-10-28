@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "router9"
-version = "0.0.21"
+version = "0.0.22"
 dependencies = [
  "async-trait",
  "axum",
