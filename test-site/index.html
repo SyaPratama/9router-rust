@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>9Router Test Bench</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="eyebrow">RUST DASHBOARD · READ-ONLY</p>
+        <h1>9Router Test Bench</h1>
+        <p>Check API health, persisted usage, quota-to-connection mapping, and credential redaction.</p>
+      </header>
+      <section aria-labelledby="checks-heading">
+        <div class="run-row">
+          <h2 id="checks-heading">Live checks</h2>
+          <button id="run-checks" type="button">Run checks</button>
+        </div>
+        <p id="run-status" role="status" aria-live="polite">Checks have not run.</p>
+        <ol id="results" aria-label="Test results"></ol>
+      </section>
+    </main>
+    <script type="module" src="/site/main.js"></script>
+  </body>
+</html>
