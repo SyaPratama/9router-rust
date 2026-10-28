@@ -206,15 +206,82 @@ pub async fn get_provider_or_connection(
     Err((StatusCode::NOT_FOUND, Json(json!({ "error": "Connection not found" }))))
 }
 
+fn contains_forbidden_credentials(value: &serde_json::Value, allow_api_key: bool, root: bool) -> bool {
+    match value {
+        serde_json::Value::Object(fields) => fields.iter().any(|(key, value)| {
+            let normalized: String = key.chars().filter(|ch| ch.is_ascii_alphanumeric()).flat_map(char::to_lowercase).collect();
+            let metadata = root && matches!(normalized.as_str(), "hasapikey" | "hasoauthtoken");
+            let allowed_api_key = root && allow_api_key && normalized == "apikey";
+            (ProviderConnection::is_sensitive_key(key) && !metadata && !allowed_api_key)
+                || contains_forbidden_credentials(value, allow_api_key, false)
+        }),
+        serde_json::Value::Array(values) => values.iter().any(|value| contains_forbidden_credentials(value, allow_api_key, false)),
+        _ => false,
+    }
+}
+
+fn provider_connection_data(
+    existing: Option<&ProviderConnection>,
+    payload: &serde_json::Value,
+    provider: &str,
+    auth_type: &str,
+) -> Result<serde_json::Value, &'static str> {
+    if contains_forbidden_credentials(payload, auth_type != "oauth", true) {
+        return Err("OAuth credentials must be obtained through the authorization flow.");
+    }
+    if let Some(existing) = existing.filter(|item| item.auth_type == "oauth") {
+        if existing.provider != provider || auth_type != "oauth" {
+            return Err("An OAuth connection cannot change provider or authentication type.");
+        }
+    } else if auth_type == "oauth" {
+        return Err("Create OAuth connections through the provider authorization flow.");
+    }
+    let mut data = existing.map(|item| item.data.clone()).unwrap_or_else(|| json!({}));
+    if let (Some(incoming), Some(saved)) = (payload.as_object(), data.as_object_mut()) {
+        for (key, value) in incoming {
+            if !matches!(key.as_str(), "hasApiKey" | "hasOAuthToken") {
+                saved.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Ok(data)
+}
+
+#[cfg(test)]
+mod provider_data_tests {
+    use super::provider_connection_data;
+    use crate::db::repos::connections::ProviderConnection;
+
+    use serde_json::json;
+    #[test]
+    fn browser_cannot_create_fake_oauth_and_updates_preserve_saved_tokens() {
+        let saved = ProviderConnection {
+            id: "conn".into(), provider: "antigravity".into(), auth_type: "oauth".into(),
+            name: None, email: None, priority: Some(1), is_active: true,
+            data: json!({ "accessToken": "stored-secret", "refreshToken": "refresh-secret" }),
+            created_at: "now".into(), updated_at: "now".into(),
+        };
+        assert!(provider_connection_data(None, &json!({ "authType": "oauth" }), "antigravity", "oauth").is_err());
+        assert!(provider_connection_data(None, &json!({ "accessToken": "attacker-token" }), "antigravity", "apikey").is_err());
+        assert!(provider_connection_data(None, &json!({ "providerSpecificData": { "access_token": "nested-token" } }), "antigravity", "apikey").is_err());
+        let updated = provider_connection_data(Some(&saved), &json!({ "isActive": false, "hasOAuthToken": true }), "antigravity", "oauth").unwrap();
+        assert_eq!(updated["accessToken"], "stored-secret");
+        assert_eq!(updated["refreshToken"], "refresh-secret");
+    }
+}
+
 pub async fn save_provider(
     State(state): State<AppState>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = state.engine.pool.get().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let id = payload.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let id = payload.get("id").and_then(|v| v.as_str()).map(str::to_owned).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let provider = payload.get("provider").and_then(|v| v.as_str()).unwrap_or("custom").to_string();
     let auth_type = payload.get("authType").and_then(|v| v.as_str()).unwrap_or("apikey").to_string();
+    let existing = ConnectionsRepo::get_by_id(&conn, &id).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let data = provider_connection_data(existing.as_ref(), &payload, &provider, &auth_type)
+        .map_err(|message| (StatusCode::BAD_REQUEST, message.to_string()))?;
     let name = payload.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
     let email = payload.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
     let priority = payload.get("priority").and_then(|v| v.as_i64()).unwrap_or(1);
@@ -229,8 +296,8 @@ pub async fn save_provider(
         email,
         priority: Some(priority),
         is_active,
-        data: payload.clone(),
-        created_at: payload.get("createdAt").and_then(|v| v.as_str()).unwrap_or(&now).to_string(),
+        data,
+        created_at: existing.map(|item| item.created_at).unwrap_or_else(|| now.clone()),
         updated_at: now,
     };
 
@@ -726,8 +793,8 @@ fn antigravity_quotas(data: &serde_json::Value, is_free_tier: bool) -> serde_jso
                 let fraction = quota.get("remainingFraction").and_then(|value| value.as_f64()).unwrap_or(0.0);
                 if !fraction.is_finite() { continue; }
                 quotas.insert(model.clone(), quota_window(
-                    (1.0 - fraction.clamp(0.0, 1.0)) * 1000.0,
-                    1000.0,
+                    100.0 - fraction.clamp(0.0, 1.0) * 100.0,
+                    100.0,
                     quota.get("resetTime"),
                     info.get("displayName").and_then(|value| value.as_str()).unwrap_or(model),
                 ));
@@ -780,8 +847,8 @@ fn antigravity_weekly_quotas(data: &serde_json::Value, quotas: &mut serde_json::
             let key = format!("{}_{}", family, if weekly { "weekly" } else { "session" });
             let name = format!("{} ({})", if family == "gemini" { "Gemini" } else { "Claude & GPT" }, if weekly { "Weekly" } else { "5h" });
             quotas.entry(key).or_insert_with(|| quota_window(
-                (1.0 - fraction.clamp(0.0, 1.0)) * 1000.0,
-                1000.0,
+                (1.0 - fraction.clamp(0.0, 1.0)) * 100.0,
+                100.0,
                 bucket.get("resetTime"),
                 &name,
             ));
@@ -830,14 +897,20 @@ fn codex_quotas(data: &serde_json::Value) -> serde_json::Map<String, serde_json:
     quotas
 }
 
-async fn fetch_connection_quota(connection: &ProviderConnection) -> serde_json::Value {
-    let access_token = connection.data.get("accessToken").and_then(|value| value.as_str()).unwrap_or("");
+async fn fetch_connection_quota(pool: &crate::db::DbPool, connection: &ProviderConnection) -> serde_json::Value {
     if !matches!(connection.provider.as_str(), "antigravity" | "codex") {
         return json!({ "plan": null, "quotas": {}, "message": format!("Live quota is not supported for provider {}.", connection.provider) });
     }
-    if access_token.is_empty() || access_token.starts_with("oauth_") || access_token == "oauth_token_active" {
+    let Some(saved_token) = connection.data.get("accessToken").and_then(|value| value.as_str()).filter(|value| !value.is_empty()) else {
+        return json!({ "plan": null, "quotas": {}, "message": "A usable OAuth access token is not saved for this connection." });
+    };
+    if saved_token.starts_with("oauth_") || saved_token == "oauth_token_active" {
         return json!({ "plan": null, "quotas": {}, "message": "A usable OAuth access token is not saved for this connection." });
     }
+    let access_token = match crate::api::handlers::oauth::access_token(pool, connection).await {
+        Ok(token) => token,
+        Err(message) => return json!({ "plan": null, "quotas": {}, "message": message }),
+    };
     let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {
         Ok(client) => client,
         Err(_) => return json!({ "plan": null, "quotas": {}, "message": "Could not initialize the provider quota client." }),
@@ -846,7 +919,7 @@ async fn fetch_connection_quota(connection: &ProviderConnection) -> serde_json::
         let user_agent = "antigravity/hub/2.24.0 darwin/arm64";
         let metadata = json!({ "metadata": { "ideType": 9, "platform": 3, "pluginType": 2 }, "mode": 1 });
         let subscription = match client.post("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
-            .bearer_auth(access_token).header("User-Agent", user_agent).json(&metadata).send().await {
+            .bearer_auth(&access_token).header("User-Agent", user_agent).json(&metadata).send().await {
             Ok(response) if response.status().is_success() => response.json::<serde_json::Value>().await.ok(),
             _ => None,
         };
@@ -854,7 +927,7 @@ async fn fetch_connection_quota(connection: &ProviderConnection) -> serde_json::
             .and_then(|value| value.as_str()).map(|value| value.to_owned());
         let body = project.map(|project| json!({"project": project})).unwrap_or_else(|| json!({}));
         let response = client.post("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels")
-            .bearer_auth(access_token).header("User-Agent", user_agent).header("X-Client-Name", "antigravity")
+            .bearer_auth(&access_token).header("User-Agent", user_agent).header("X-Client-Name", "antigravity")
             .header("X-Client-Version", "2.24.0").json(&body).send().await;
         match response {
             Ok(response) if response.status().is_success() => match response.json::<serde_json::Value>().await {
@@ -865,7 +938,7 @@ async fn fetch_connection_quota(connection: &ProviderConnection) -> serde_json::
                         .is_none_or(|id| id == "free-tier");
                     let mut quotas = antigravity_quotas(&data, is_free_tier);
                     if let Ok(response) = client.post("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
-                        .bearer_auth(access_token).header("User-Agent", user_agent).header("X-Client-Name", "antigravity")
+                        .bearer_auth(&access_token).header("User-Agent", user_agent).header("X-Client-Name", "antigravity")
                         .header("X-Client-Version", "2.24.0").json(&body).send().await {
                         if response.status().is_success() {
                             if let Ok(summary) = response.json::<serde_json::Value>().await { antigravity_weekly_quotas(&summary, &mut quotas); }
@@ -883,7 +956,7 @@ async fn fetch_connection_quota(connection: &ProviderConnection) -> serde_json::
         }
     } else {
         match client.get("https://chatgpt.com/backend-api/wham/usage")
-            .bearer_auth(access_token).header("Accept", "application/json").send().await {
+            .bearer_auth(&access_token).header("Accept", "application/json").send().await {
             Ok(response) if response.status().is_success() => match response.json::<serde_json::Value>().await {
                 Ok(data) => json!({
                     "plan": data.get("plan_type").or_else(|| data.pointer("summary.plan")),
@@ -906,7 +979,7 @@ pub async fn get_connection_usage(
     let connection = ConnectionsRepo::get_by_id(&conn, &connection_id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "Connection not found".to_string()))?;
-    let mut usage = fetch_connection_quota(&connection).await;
+    let mut usage = fetch_connection_quota(&state.engine.pool, &connection).await;
     if let Some(object) = usage.as_object_mut() { object.insert("connectionId".into(), json!(connection.id)); }
     Ok(Json(usage))
 }
@@ -918,7 +991,7 @@ pub async fn get_quota(
     let connections = ConnectionsRepo::list_all(&conn).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut quota_items = Vec::with_capacity(connections.len());
     for connection in connections {
-        let usage = fetch_connection_quota(&connection).await;
+        let usage = fetch_connection_quota(&state.engine.pool, &connection).await;
         quota_items.push(json!({
             "id": connection.id,
             "provider": connection.provider,
@@ -1103,7 +1176,7 @@ mod quota_tests {
         }});
         let mut quotas = antigravity_quotas(&data, false);
         assert_eq!(quotas.len(), 1);
-        assert_eq!(quotas["gemini-3.8-flash-high"]["used"], 750.0);
+        assert_eq!(quotas["gemini-3.8-flash-high"]["used"], 75.0);
         assert_eq!(quotas["gemini-3.8-flash-high"]["remainingPercentage"], 25.0);
         assert!(antigravity_quotas(&data, true).is_empty());
         antigravity_weekly_quotas(&json!({"groups": [{

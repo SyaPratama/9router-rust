@@ -9,7 +9,7 @@
 
   [![License: MIT](https://img.shields.io/badge/License-MIT%20%2F%20Apache--2.0-blue.svg)](./LICENSE)
   [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg?logo=rust)](https://www.rust-lang.org/)
-  [![GitHub Release](https://img.shields.io/badge/Release-v0.0.21-10b981.svg?logo=github)](https://github.com/SyaPratama/9router-rust/releases/tag/v0.0.21)
+  [![GitHub Release](https://img.shields.io/badge/Release-v0.0.22-10b981.svg?logo=github)](https://github.com/SyaPratama/9router-rust/releases/tag/v0.0.22)
   [![Memory](https://img.shields.io/badge/RAM-%3C15MB-success.svg)]()
   [![Throughput](https://img.shields.io/badge/Throughput-15k%2B%20req%2Fs-blue.svg)]()
 
@@ -47,12 +47,17 @@ Browse and configure all 142 supported providers across OAuth, Free Tier, and AP
   <img src="./images/9router.png" alt="9Router Providers Catalog" width="850"/>
 </div>
 
-### 2. Authentic OAuth Popup Authorization
-One-click browser popup authorization with automated callback listener and manual URL extraction fallback.
+### 2. Server-Side OAuth Connections
+Antigravity and Codex use server-generated authorization state, callback validation, code exchange, and provider account identity retrieval. Credentials stay in SQLite and are redacted from provider API responses; SQLite does not encrypt them at rest. Other OAuth flows report unavailable until their provider-specific flow is implemented.
 
-<div align="center">
-  <img src="./images/oauth-modal.png" alt="OAuth Popup Authorization" width="550"/>
-</div>
+Register this exact callback URL with each OAuth client and configure the daemon before launch. Keep its host and port identical to the dashboard URL; change the example port to match `PORT`.
+
+```text
+ROUTER_OAUTH_REDIRECT_URI=http://127.0.0.1:20129/api/oauth/callback
+ANTIGRAVITY_OAUTH_CLIENT_ID=...
+ANTIGRAVITY_OAUTH_CLIENT_SECRET=...
+CODEX_OAUTH_CLIENT_ID=...
+```
 
 ### 3. Provider Models & Live Probing
 View active models, copy upstream IDs, and execute live capability probes directly from the dashboard.

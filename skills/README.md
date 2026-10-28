@@ -82,5 +82,5 @@ export NINEROUTER_KEY="sk-9router"               # from Dashboard → Endpoint &
 Test connectivity:
 ```bash
 curl -s http://localhost:20128/api/health
-# {"engine":"native-rust","headroom":"integrated","status":"ok","version":"0.0.21"}
+# {"engine":"native-rust","headroom":"integrated","status":"ok","version":"0.0.22"}
 ```

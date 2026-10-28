@@ -1,0 +1,16 @@
+{
+  "name": "9router-test-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test unit/*.test.js",
+    "test:oauth": "node oauth-browser-smoke.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.16.0",
+    "vite": "^8.3.4"
+  }
+}

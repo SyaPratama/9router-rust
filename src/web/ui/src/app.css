@@ -1176,4 +1176,7 @@ aside nav button:focus-visible, aside .nav-item:focus-visible { position: relati
   .quota-filters { width: 100%; }
   .quota-filters select { flex: 1; min-width: 0; }
   .quota-refresh { justify-content: space-between; }
+  .section-title-bar { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+  .section-title-bar > div { width: 100%; flex-wrap: wrap; }
+  .section-title-bar > div > button { flex: 1 1 150px; min-width: 0; }
 }

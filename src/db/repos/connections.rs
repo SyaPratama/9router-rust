@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConnection {
     pub id: String,
     pub provider: String,
@@ -21,26 +21,64 @@ pub struct ProviderConnection {
 }
 
 impl ProviderConnection {
+    pub fn is_sensitive_key(key: &str) -> bool {
+        let normalized: String = key.chars().filter(|ch| ch.is_ascii_alphanumeric()).flat_map(char::to_lowercase).collect();
+        normalized.contains("token") || normalized.contains("secret") || normalized.contains("authorization") || normalized.contains("apikey") || normalized.contains("code") || normalized == "key" || normalized.ends_with("key")
+    }
+
     pub fn to_merged_json(&self) -> serde_json::Value {
         let mut base = serde_json::json!({
-            "id": self.id,
-            "provider": self.provider,
-            "authType": self.auth_type,
-            "name": self.name,
-            "email": self.email,
-            "priority": self.priority.unwrap_or(1),
-            "isActive": self.is_active,
-            "createdAt": self.created_at,
-            "updatedAt": self.updated_at,
+            "id": self.id, "provider": self.provider, "authType": self.auth_type,
+            "name": self.name, "email": self.email, "priority": self.priority.unwrap_or(1),
+            "isActive": self.is_active, "createdAt": self.created_at, "updatedAt": self.updated_at,
         });
-        if let serde_json::Value::Object(map) = &self.data {
-            if let serde_json::Value::Object(ref mut base_map) = base {
-                for (k, v) in map {
-                    base_map.insert(k.clone(), v.clone());
+        if let (serde_json::Value::Object(map), serde_json::Value::Object(base_map)) = (&self.data, &mut base) {
+            for (key, value) in map {
+                if !Self::is_sensitive_key(key) {
+                    base_map.insert(key.clone(), redact_credentials(value));
                 }
             }
+            let api_key = map.iter().find(|(key, _)| Self::is_sensitive_key(key) && key.to_ascii_lowercase().contains("apikey"));
+            let access_token = map.iter().find(|(key, _)| key.to_ascii_lowercase().contains("accesstoken") || key.to_ascii_lowercase().contains("access_token"));
+            base_map.insert("hasApiKey".into(), serde_json::json!(api_key.is_some_and(|(_, value)| !value.as_str().unwrap_or_default().is_empty())));
+            base_map.insert("hasOAuthToken".into(), serde_json::json!(access_token.is_some_and(|(_, value)| !value.as_str().unwrap_or_default().is_empty())));
         }
         base
+    }
+}
+
+fn redact_credentials(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(map.iter()
+            .filter(|(key, _)| !ProviderConnection::is_sensitive_key(key))
+            .map(|(key, value)| (key.clone(), redact_credentials(value))).collect()),
+        serde_json::Value::Array(values) => serde_json::Value::Array(values.iter().map(redact_credentials).collect()),
+        value => value.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderConnection;
+
+    #[test]
+    fn merged_json_never_returns_credentials() {
+        let connection = ProviderConnection {
+            id: "conn".into(), provider: "antigravity".into(), auth_type: "oauth".into(),
+            name: None, email: None, priority: Some(1), is_active: true,
+            data: serde_json::json!({
+                "apiKey": "key-secret", "accessToken": "access-secret", "access_token": "snake-access-secret",
+                "refreshToken": "refresh-secret", "idToken": "id-secret", "clientSecret": "client-secret",
+                "code": "auth-code", "baseUrl": "https://example.test",
+                "providerSpecificData": { "refresh_token": "nested-refresh-secret" }
+            }),
+            created_at: "now".into(), updated_at: "now".into(),
+        };
+        let json = connection.to_merged_json().to_string();
+        for secret in ["key-secret", "access-secret", "snake-access-secret", "refresh-secret", "id-secret", "client-secret", "auth-code", "nested-refresh-secret"] {
+            assert!(!json.contains(secret));
+        }
+        assert!(json.contains("https://example.test"));
     }
 }
 

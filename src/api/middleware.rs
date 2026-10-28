@@ -10,8 +10,18 @@ use crate::db::repos::settings::SettingsRepo;
 use crate::routing::RoutingEngine;
 
 #[derive(Clone)]
+pub struct OAuthSession {
+    pub provider: String,
+    pub redirect_uri: String,
+    pub browser_binding: String,
+    pub verifier: Option<String>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Clone)]
 pub struct AppState {
     pub engine: Arc<RoutingEngine>,
+    pub oauth_sessions: Arc<std::sync::Mutex<std::collections::HashMap<String, OAuthSession>>>,
 }
 
 pub async fn security_middleware(

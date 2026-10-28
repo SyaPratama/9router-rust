@@ -81,53 +81,13 @@
 </head>
 <body>
   <div class="card">
-    <div class="spinner" id="spinner"></div>
-    <h1 id="status-title">Authorization Received</h1>
-    <p id="status-desc">Communicating authentication tokens back to 9Router...</p>
-    <div class="url-box" id="url-box" style="display:none;"></div>
+    <h1>Sign-in route retired</h1>
+    <p>This legacy callback does not accept authorization codes or tokens. Start provider sign-in from the dashboard.</p>
     <a href="/dashboard" class="btn" id="return-btn">Return to Dashboard</a>
   </div>
 
   <script>
-    (function() {
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get('code');
-      const token = params.get('token') || params.get('access_token');
-      const state = params.get('state');
-      const error = params.get('error');
-      const fullUrl = window.location.href;
-
-      const urlBox = document.getElementById('url-box');
-      if (urlBox) {
-        urlBox.textContent = fullUrl;
-        urlBox.style.display = 'block';
-      }
-
-      if (window.opener) {
-        try {
-          window.opener.postMessage({
-            type: 'oauth_callback',
-            data: {
-              code: code,
-              token: token,
-              state: state,
-              error: error,
-              fullUrl: fullUrl
-            }
-          }, '*');
-
-          document.getElementById('status-title').textContent = 'Connected Successfully!';
-          document.getElementById('status-desc').textContent = 'Closing popup window and returning to 9Router...';
-          setTimeout(function() {
-            try { window.close(); } catch(e) {}
-          }, 1000);
-        } catch (e) {
-          console.error('postMessage failed:', e);
-        }
-      } else {
-        document.getElementById('status-desc').textContent = 'If 9Router did not connect automatically, copy the URL below and paste it into Step 2.';
-      }
-    })();
+    history.replaceState(null, '', window.location.pathname);
   </script>
 </body>
 </html>
